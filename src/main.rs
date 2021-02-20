@@ -1,6 +1,7 @@
-use image::{/*DynamicImage, Rgba, RgbaImage,*/ GrayImage, Luma, /*imageops, GenericImageView*/};
+use image::{/*DynamicImage, Rgba, RgbaImage,*/ GrayImage, Luma, imageops /*, GenericImageView*/};
 // use imageproc::drawing;
 // use rand::Rng;
+use std::time::SystemTime;
 
 struct Pyramid {
     images: Vec::<GrayImage>
@@ -71,7 +72,16 @@ impl Pyramid {
 fn main() {
     println!("Hello, world!");
     let src_image =
-        image::open("res/im0.png").expect("failed to open image");
-    let pyramid = Pyramid::new(&src_image.into_luma8(), 4);
+        image::open("res/im0.png").expect("failed to open image")
+            .into_luma8();
+    let (mut w, mut h) = src_image.dimensions();
+    h = h * 640 / w;
+    w = 640;
+    let src_image = imageops::resize(&src_image,
+        w, h, imageops::FilterType::CatmullRom);
+    println!("image {}x{}", w, h);
+    let now = SystemTime::now();
+    let pyramid = Pyramid::new(&src_image, 4);
+    println!("pyramid took {}ms", now.elapsed().unwrap().as_millis());
     pyramid.images[3].save("out.png").expect("couldn't save");
 }
