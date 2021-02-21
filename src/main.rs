@@ -2,6 +2,7 @@ extern crate nalgebra as na;
 use image::{/*DynamicImage, Rgba, RgbaImage,*/ GrayImage, Luma, imageops /*, GenericImageView*/};
 use imageproc::{/*drawing, */ corners, gradients};
 // use rand::Rng;
+use num;
 use std::time::SystemTime;
 
 struct Pyramid {
@@ -9,20 +10,14 @@ struct Pyramid {
 }
 
 fn get_safe_from_image(image: &GrayImage, x:i32, y:i32) -> Luma<u8> {
-    if x >= 0 && (x as u32) < image.width()
-        && y >=0 && (y as u32) < image.height() {
-        image.get_pixel(x as u32, y as u32).clone()
-    } else {
-        Luma([0])
-    }
+    let sx = num::clamp(x, 0, image.width() as i32 - 1);
+    let sy = num::clamp(y, 0, image.height() as i32 - 1);
+    *image.get_pixel(sx as u32, sy as u32)
 }
 
 fn get_safe_from_vec(v: &Vec<u8>, i: i32) -> u8 {
-    if i >= 0 && (i as usize) < v.len() {
-        v[i as usize]
-    } else {
-        0
-    }
+    let si = num::clamp(i, 0, v.len() as i32 - 1);
+    v[si as usize]
 }
 
 impl Pyramid {
@@ -70,6 +65,10 @@ impl Pyramid {
 }
 
 fn harris_score(src:&GrayImage, x:u32, y:u32) -> f32 {
+    let (w, h) = src.dimensions();
+    if x < 3 || y < 3 || x > w || w - x < 3 || y > h || h - y < 3 {
+        return 0.0;
+    }
     let view = imageops::crop_imm(src, x - 3, y - 3, 7, 7).to_image();
     let view_ix = gradients::horizontal_sobel(&view);
     let view_iy = gradients::vertical_sobel(&view);
@@ -79,10 +78,12 @@ fn harris_score(src:&GrayImage, x:u32, y:u32) -> f32 {
         for i in 0..7 {
             let Luma([ix]) = view_ix.get_pixel(i, j);
             let Luma([iy]) = view_iy.get_pixel(i, j);
-            a[(0, 0)] += (ix * ix) as f32 * s;
-            a[(0, 1)] += (ix * iy) as f32 * s;
-            a[(1, 0)] += (ix * iy) as f32 * s;
-            a[(1, 1)] += (iy * iy) as f32 * s;
+            let ix = *ix as f32;
+            let iy = *iy as f32;
+            a[(0, 0)] += ix * ix * s;
+            a[(0, 1)] += ix * iy * s;
+            a[(1, 0)] += ix * iy * s;
+            a[(1, 1)] += iy * iy * s;
         }
     }
     let score = a.determinant() - 0.06 * a.trace() * a.trace();
@@ -102,6 +103,79 @@ fn find_features(src:&GrayImage) {
         println!("{}, {} : {} {}", x, y, score, corner.score);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{imageops, ImageBuffer, Luma};
+    use more_asserts::*;
+
+    #[test]
+    fn test_pyramid() {
+        let image = ImageBuffer::from_pixel(8, 8, Luma([128u8]));
+        let pyramid = Pyramid::new(&image, 4);
+        assert_eq!(pyramid.images.len(), 4);
+        assert_eq!(pyramid.images[3].dimensions(), (1, 1));
+        assert_eq!(*pyramid.images[3].get_pixel(0, 0), Luma([128u8]));
+    }
+
+    #[test]
+    fn test_harris_flat() {
+        let image = ImageBuffer::from_pixel(8, 8, Luma([128u8]));
+        let score = harris_score(&image, 4, 4);
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn test_harris_bounds() {
+        let image = ImageBuffer::from_pixel(8, 8, Luma([128u8]));
+        let score = harris_score(&image, 2, 2);
+        assert_eq!(score, 0.0);
+        let score = harris_score(&image, 7, 9);
+        assert_eq!(score, 0.0);
+    }
+ 
+    #[test]
+    fn test_harris_constant_gradient() {
+        let mut image = GrayImage::new(20, 20);
+        imageops::horizontal_gradient(&mut image, &Luma([0]), &Luma([255]));
+        let score = harris_score(&image, 10, 10);
+        assert_le!(score, 0.0);
+        // invert the gradient
+        imageops::horizontal_gradient(&mut image, &Luma([255]), &Luma([0]));
+        let score = harris_score(&image, 10, 10);
+        assert_le!(score, 0.0);
+        // rotate by 90
+        image = imageops::rotate90(&image);
+        let score = harris_score(&image, 10, 10);
+        assert_le!(score, 0.0);
+    }
+
+    #[test]
+    fn test_harris_corner() {
+        let mut white = ImageBuffer::from_pixel(8, 8, Luma([255u8]));
+        let black = ImageBuffer::from_pixel(4, 4, Luma([0u8]));
+        imageops::replace(&mut white, &black, 0, 0);
+        let score = harris_score(&white, 4, 4);
+        assert_gt!(score, 0.0);
+        let white90 = imageops::rotate90(&white);
+        let score = harris_score(&white90, 4, 4);
+        assert_gt!(score, 0.0);
+    }
+
+    #[test]
+    fn test_harris_corner_invert() {
+        let mut black = ImageBuffer::from_pixel(8, 8, Luma([0u8]));
+        let white = ImageBuffer::from_pixel(4, 4, Luma([255u8]));
+        imageops::replace(&mut black, &white, 0, 0);
+        let score = harris_score(&black, 4, 4);
+        assert_gt!(score, 0.0);
+        let black270 = imageops::rotate270(&black);
+        let score = harris_score(&black270, 4, 4);
+        assert_gt!(score, 0.0);
+    }
+}
+
 
 fn main() {
     println!("Hello, world!");
