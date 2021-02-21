@@ -1,5 +1,6 @@
+extern crate nalgebra as na;
 use image::{/*DynamicImage, Rgba, RgbaImage,*/ GrayImage, Luma, imageops /*, GenericImageView*/};
-// use imageproc::drawing;
+use imageproc::{/*drawing, */ corners, gradients};
 // use rand::Rng;
 use std::time::SystemTime;
 
@@ -68,6 +69,39 @@ impl Pyramid {
     }
 }
 
+fn harris_score(src:&GrayImage, x:u32, y:u32) -> f32 {
+    let view = imageops::crop_imm(src, x - 3, y - 3, 7, 7).to_image();
+    let view_ix = gradients::horizontal_sobel(&view);
+    let view_iy = gradients::vertical_sobel(&view);
+    let mut a = na::Matrix2::new(0.0, 0.0, 0.0, 0.0);
+    let s = 1.0 / ( 49.0 * 49.0 );
+    for j in 0..7 {
+        for i in 0..7 {
+            let Luma([ix]) = view_ix.get_pixel(i, j);
+            let Luma([iy]) = view_iy.get_pixel(i, j);
+            a[(0, 0)] += (ix * ix) as f32 * s;
+            a[(0, 1)] += (ix * iy) as f32 * s;
+            a[(1, 0)] += (ix * iy) as f32 * s;
+            a[(1, 1)] += (iy * iy) as f32 * s;
+        }
+    }
+    let score = a.determinant() - 0.06 * a.trace() * a.trace();
+    score
+}
+
+fn find_features(src:&GrayImage) {
+    let threshold = 32;
+    let corners = corners::corners_fast9(src, threshold);
+    println!("threshold: {} corners: {}", threshold, corners.len());
+
+    for corner in corners {
+        // assume FAST returns no corners within 3 pixels of edge
+        let x = corner.x;
+        let y = corner.y;
+        let score = harris_score(src, x, y);
+        println!("{}, {} : {} {}", x, y, score, corner.score);
+    }
+}
 
 fn main() {
     println!("Hello, world!");
@@ -83,5 +117,9 @@ fn main() {
     let now = SystemTime::now();
     let pyramid = Pyramid::new(&src_image, 4);
     println!("pyramid took {}ms", now.elapsed().unwrap().as_millis());
+    
+    let now = SystemTime::now();
+    find_features(&pyramid.images[0]);
+    println!("find features  took {}ms", now.elapsed().unwrap().as_millis());
     pyramid.images[3].save("out.png").expect("couldn't save");
 }
