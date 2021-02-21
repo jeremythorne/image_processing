@@ -1,6 +1,6 @@
 extern crate nalgebra as na;
-use image::{/*DynamicImage, Rgba, RgbaImage,*/ GrayImage, Luma, imageops /*, GenericImageView*/};
-use imageproc::{/*drawing, */ corners, gradients};
+use image::{/*DynamicImage*/ Rgba, /*RgbaImage,*/ GrayImage, Luma, imageops /*, GenericImageView*/};
+use imageproc::{drawing, corners, gradients};
 // use rand::Rng;
 use num;
 use std::time::SystemTime;
@@ -90,18 +90,22 @@ fn harris_score(src:&GrayImage, x:u32, y:u32) -> f32 {
     score
 }
 
-fn find_features(src:&GrayImage) {
+fn find_features(src:&GrayImage) -> Vec<corners::Corner> {
     let threshold = 32;
-    let corners = corners::corners_fast9(src, threshold);
+    let mut corners = corners::corners_fast9(src, threshold);
     println!("threshold: {} corners: {}", threshold, corners.len());
 
-    for corner in corners {
-        // assume FAST returns no corners within 3 pixels of edge
+    for mut corner in corners.iter_mut() {
         let x = corner.x;
         let y = corner.y;
-        let score = harris_score(src, x, y);
-        println!("{}, {} : {} {}", x, y, score, corner.score);
+        corner.score = harris_score(src, x, y);
     }
+
+    // sort by score and pick the top half
+    corners.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+    corners.truncate(corners.len() / 2);
+    println!("sorted and truncated to {}", corners.len());
+    corners
 }
 
 #[cfg(test)]
@@ -191,9 +195,23 @@ fn main() {
     let now = SystemTime::now();
     let pyramid = Pyramid::new(&src_image, 4);
     println!("pyramid took {}ms", now.elapsed().unwrap().as_millis());
-    
-    let now = SystemTime::now();
-    find_features(&pyramid.images[0]);
-    println!("find features  took {}ms", now.elapsed().unwrap().as_millis());
-    pyramid.images[3].save("out.png").expect("couldn't save");
+
+    let mut palette = [(0u8, 0u8, 0u8); 256];
+    for i in 0..255 {
+        let g = i as u8;
+        palette[i] = (g, g, g);
+    }
+    let mut dst = src_image.expand_palette(&palette, None);
+     
+    for level in 0..pyramid.images.len() {
+        let now = SystemTime::now();
+        let corners = find_features(&pyramid.images[level]);
+        println!("level {} find features  took {}ms", level, now.elapsed().unwrap().as_millis());
+        for corner in corners.iter() {
+            let s = 1 << level;
+            let p = ((corner.x * s) as i32, (corner.y * s) as i32);
+            drawing::draw_hollow_circle_mut(&mut dst, p, 3 * s as i32, Rgba([0u8, 0u8, 255u8, 255u8]));  
+        }
+    }
+    dst.save("out.png").expect("couldn't save");
 }
