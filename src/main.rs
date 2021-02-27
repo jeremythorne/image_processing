@@ -64,27 +64,38 @@ impl Pyramid {
     }
 }
 
-fn harris_score(src:&GrayImage, x:u32, y:u32) -> f32 {
+fn circular_window(r:f32) ->Vec<(i32, i32)> {
+    let mut offsets = Vec::<(i32, i32)>::new();
+    for y in (-r as i32)..((r + 1.0) as i32) {
+        let x_max = (r * r - (y * y) as f32).sqrt();
+        for x in (-x_max as i32)..((x_max + 1.0) as i32) {
+            offsets.push((x, y));
+        }
+    }
+    offsets
+}
+
+fn harris_score(src:&GrayImage, x:u32, y:u32, r:u32) -> f32 {
     let (w, h) = src.dimensions();
-    if x < 3 || y < 3 || x > w || w - x < 3 || y > h || h - y < 3 {
+    if x < r || y < r || x > w || w - x < r || y > h || h - y < r {
         return 0.0;
     }
-    let view = imageops::crop_imm(src, x - 3, y - 3, 7, 7).to_image();
+    let view = imageops::crop_imm(src, x - r, y - r, 2 * r + 1, 2 * r + 1).to_image();
     let view_ix = gradients::horizontal_sobel(&view);
     let view_iy = gradients::vertical_sobel(&view);
     let mut a = na::Matrix2::new(0.0, 0.0, 0.0, 0.0);
-    let s = 1.0 / ( 49.0 * 49.0 );
-    for j in 0..7 {
-        for i in 0..7 {
-            let Luma([ix]) = view_ix.get_pixel(i, j);
-            let Luma([iy]) = view_iy.get_pixel(i, j);
-            let ix = *ix as f32;
-            let iy = *iy as f32;
-            a[(0, 0)] += ix * ix * s;
-            a[(0, 1)] += ix * iy * s;
-            a[(1, 0)] += ix * iy * s;
-            a[(1, 1)] += iy * iy * s;
-        }
+    let window = circular_window(r as f32 + 0.5);
+    let s = 1.0 / ( window.len().pow(4) as f32 );
+    let ri = r as i32;
+    for (i, j) in window.iter() {
+        let Luma([ix]) = view_ix.get_pixel((i + ri) as u32, (j + ri) as u32);
+        let Luma([iy]) = view_iy.get_pixel((i + ri) as u32, (j + ri) as u32);
+        let ix = *ix as f32;
+        let iy = *iy as f32;
+        a[(0, 0)] += ix * ix * s;
+        a[(0, 1)] += ix * iy * s;
+        a[(1, 0)] += ix * iy * s;
+        a[(1, 1)] += iy * iy * s;
     }
     let score = a.determinant() - 0.06 * a.trace() * a.trace();
     score
@@ -98,13 +109,55 @@ fn find_features(src:&GrayImage) -> Vec<corners::Corner> {
     for mut corner in corners.iter_mut() {
         let x = corner.x;
         let y = corner.y;
-        corner.score = harris_score(src, x, y);
+        corner.score = harris_score(src, x, y, 3);
     }
 
     // sort by score and pick the top half
     corners.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
     corners.truncate(corners.len() / 2);
     println!("sorted and truncated to {}", corners.len());
+    corners
+}
+
+fn orientation(image:&GrayImage, x:u32, y:u32, r:u32) -> f32 {
+    if x < r || y < r || x > image.width() - r || y > image.height() -r {
+        return 0.0;
+    }
+    // mpq = sum((x^p)*(y^q)*I(x,y))
+    // theta = atan2(m01, m10)
+    let mut m01:f32 = 0.0;
+    let mut m10:f32 = 0.0;
+    let window = circular_window(r as f32 + 0.5);
+    let xi = x as i32;
+    let yi = y as i32;
+    for (i, j) in window.iter() {
+        let Luma([p]) = image.get_pixel((xi + i) as u32, (yi + j) as u32);
+        m01 += (*j as f32) * (*p as f32);
+        m10 += (*i as f32) * (*p as f32);
+    }
+    m01.atan2(m10)
+}
+
+
+struct ScaledCorner {
+    corner: corners::Corner,
+    angle: f32,
+    level: u32
+}
+
+fn find_features_in_pyramid(pyramid:&Pyramid) -> Vec<ScaledCorner> {
+    let mut corners = Vec::<ScaledCorner>::new();
+    for (i, image) in pyramid.images.iter().enumerate() {
+        let level_corners = find_features(image);
+        for c in level_corners {
+            corners.push(
+                ScaledCorner {
+                    corner: c,
+                    angle: orientation(image, c.x, c.y, 3),
+                    level: i as u32
+                });
+        }
+    }
     corners
 }
 
@@ -126,16 +179,16 @@ mod tests {
     #[test]
     fn test_harris_flat() {
         let image = ImageBuffer::from_pixel(8, 8, Luma([128u8]));
-        let score = harris_score(&image, 4, 4);
+        let score = harris_score(&image, 4, 4, 3);
         assert_eq!(score, 0.0);
     }
 
     #[test]
     fn test_harris_bounds() {
         let image = ImageBuffer::from_pixel(8, 8, Luma([128u8]));
-        let score = harris_score(&image, 2, 2);
+        let score = harris_score(&image, 2, 2, 3);
         assert_eq!(score, 0.0);
-        let score = harris_score(&image, 7, 9);
+        let score = harris_score(&image, 7, 9, 3);
         assert_eq!(score, 0.0);
     }
  
@@ -143,15 +196,15 @@ mod tests {
     fn test_harris_constant_gradient() {
         let mut image = GrayImage::new(20, 20);
         imageops::horizontal_gradient(&mut image, &Luma([0]), &Luma([255]));
-        let score = harris_score(&image, 10, 10);
+        let score = harris_score(&image, 10, 10, 3);
         assert_le!(score, 0.0);
         // invert the gradient
         imageops::horizontal_gradient(&mut image, &Luma([255]), &Luma([0]));
-        let score = harris_score(&image, 10, 10);
+        let score = harris_score(&image, 10, 10, 3);
         assert_le!(score, 0.0);
         // rotate by 90
         image = imageops::rotate90(&image);
-        let score = harris_score(&image, 10, 10);
+        let score = harris_score(&image, 10, 10, 3);
         assert_le!(score, 0.0);
     }
 
@@ -160,10 +213,10 @@ mod tests {
         let mut white = ImageBuffer::from_pixel(8, 8, Luma([255u8]));
         let black = ImageBuffer::from_pixel(4, 4, Luma([0u8]));
         imageops::replace(&mut white, &black, 0, 0);
-        let score = harris_score(&white, 4, 4);
+        let score = harris_score(&white, 4, 4, 3);
         assert_gt!(score, 0.0);
         let white90 = imageops::rotate90(&white);
-        let score = harris_score(&white90, 4, 4);
+        let score = harris_score(&white90, 4, 4, 3);
         assert_gt!(score, 0.0);
     }
 
@@ -172,13 +225,26 @@ mod tests {
         let mut black = ImageBuffer::from_pixel(8, 8, Luma([0u8]));
         let white = ImageBuffer::from_pixel(4, 4, Luma([255u8]));
         imageops::replace(&mut black, &white, 0, 0);
-        let score = harris_score(&black, 4, 4);
+        let score = harris_score(&black, 4, 4, 3);
         assert_gt!(score, 0.0);
         let black270 = imageops::rotate270(&black);
-        let score = harris_score(&black270, 4, 4);
+        let score = harris_score(&black270, 4, 4, 3);
         assert_gt!(score, 0.0);
     }
+
+    #[test]
+    fn test_circular_window() {
+        let w0 = [(0, 0)];
+        assert_eq!(&w0[..], &circular_window(0.0)[..]);
+        let w25 = [(-1, -2), (0, -2), (1, -2),
+            (-2, -1), (-1, -1), (0, -1), (1, -1), (2, -1),
+            (-2, 0), (-1, 0), (0, 0), (1, 0), (2, 0),
+            (-2, 1), (-1, 1), (0, 1), (1, 1), (2, 1),
+            (-1, 2), (0, 2), (1, 2)];
+        assert_eq!(&w25[..], &circular_window(2.5)[..]);
+    }
 }
+
 
 
 fn main() {
@@ -202,16 +268,22 @@ fn main() {
         palette[i] = (g, g, g);
     }
     let mut dst = src_image.expand_palette(&palette, None);
-     
-    for level in 0..pyramid.images.len() {
-        let now = SystemTime::now();
-        let corners = find_features(&pyramid.images[level]);
-        println!("level {} find features  took {}ms", level, now.elapsed().unwrap().as_millis());
-        for corner in corners.iter() {
-            let s = 1 << level;
-            let p = ((corner.x * s) as i32, (corner.y * s) as i32);
-            drawing::draw_hollow_circle_mut(&mut dst, p, 3 * s as i32, Rgba([0u8, 0u8, 255u8, 255u8]));  
-        }
+
+
+    let now = SystemTime::now();
+    let corners = find_features_in_pyramid(&pyramid);
+    println!("find features  took {}ms", now.elapsed().unwrap().as_millis());
+
+    let blue = Rgba([0u8, 0u8, 255u8, 128u8]);
+    let red = Rgba([255u8, 0u8, 0u8, 128u8]);
+    for corner in corners.iter() {
+        let s = 1 << corner.level;
+        let p = ((corner.corner.x * s) as i32, (corner.corner.y * s) as i32);
+        drawing::draw_hollow_circle_mut(&mut dst, p, 3 * s as i32, blue);  
+        let ln = ((s as f32) * 3.0 * corner.angle.cos(), (s as f32) * 3.0 * corner.angle.sin());
+        let line_start = (p.0 as f32 + ln.0, p.1 as f32 + ln.1);
+        let line_end = (p.0 as f32 - ln.0, p.1 as f32 - ln.1);
+        drawing::draw_line_segment_mut(&mut dst, line_start, line_end, red);
     }
     dst.save("out.png").expect("couldn't save");
 }
