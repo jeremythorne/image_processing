@@ -1,7 +1,8 @@
 extern crate nalgebra as na;
 use image::{/*DynamicImage*/ Rgba, /*RgbaImage,*/ GrayImage, Luma, imageops /*, GenericImageView*/};
 use imageproc::{drawing, corners, gradients};
-// use rand::Rng;
+use rand::{thread_rng, Rng};
+use rand::distributions::{Uniform};
 use num;
 use std::time::SystemTime;
 
@@ -138,22 +139,70 @@ fn orientation(image:&GrayImage, x:u32, y:u32, r:u32) -> f32 {
     m01.atan2(m10)
 }
 
+mod rbrief {
+    struct Point {
+        x: i32,
+        y: i32
+    }
+
+    fn test_set() -> Vec<(Point, Point)> {
+        // 128 pairs of points in range -15 to +15
+        let mut set = Vec::<(Point, Point)>::new();
+        let mut rng = thread_rng();
+        let d = Uniform::new_inclusive(-15, 15);
+        let v: Vec<i32> = (&mut rng).sample_iter(d).take(128 * 4).collect(); 
+        for i in 0..128 {
+            set.push((Point {
+                        x:v[i * 4],
+                        y:v[i * 4 + 1]
+                     },
+                     Point {
+                        x:v[i * 4 + 2],
+                        y:v[i * 4 + 3]
+                      }));
+        }
+    }
+
+    fn rotate(set:Vec<(Point, Point)>, angle:f32) -> Vec<(Point, Point)> {
+        let c = cos(angle);
+        let s = sin(angle);
+        set.iter().map(|(p1, p2)|
+            (Point {
+                        x:(c * p1.x as f32 - s * p1.y as f32) as i32,
+                        y:(s * p1.y as f32 + c * p1.y as f32) as i32,
+                     },
+                     Point {
+                        x:(c * p2.x as f32 - s * p2.y as f32) as i32,
+                        y:(s * p2.y as f32 + c * p2.y as f32) as i32,
+                      }))
+            .collect()
+    }
+
+    //TODO collect prerotated set at pi/30 intervals
+    // calculate the 128 bit score for a given integral image and test_set
+    // calculate said score for given integral image, angle, prerotated test_set
+}
 
 struct ScaledCorner {
     corner: corners::Corner,
     angle: f32,
+    descripton: u128,
     level: u32
 }
 
 fn find_features_in_pyramid(pyramid:&Pyramid) -> Vec<ScaledCorner> {
     let mut corners = Vec::<ScaledCorner>::new();
+    let tests = rbrief::test_set();
     for (i, image) in pyramid.images.iter().enumerate() {
         let level_corners = find_features(image);
+        let angle = orientation(image, c.x, c.y, 3);
+        let descriptor = rbrief::describe(image, c.x, c.y, angle, i as u32, tests);
         for c in level_corners {
             corners.push(
                 ScaledCorner {
                     corner: c,
-                    angle: orientation(image, c.x, c.y, 3),
+                    angle: angle,
+                    descriptor: descriptor,
                     level: i as u32
                 });
         }
