@@ -1,8 +1,8 @@
 extern crate nalgebra as na;
 use image::{/*DynamicImage*/ Rgba, /*RgbaImage,*/ GrayImage, Luma, imageops /*, GenericImageView*/};
 use imageproc::{drawing, corners, gradients};
-use rand::{thread_rng, Rng};
-use rand::distributions::{Uniform};
+//use rand::{thread_rng, Rng};
+//use rand::distributions::{Uniform};
 use num;
 use std::time::SystemTime;
 
@@ -139,6 +139,7 @@ fn orientation(image:&GrayImage, x:u32, y:u32, r:u32) -> f32 {
     m01.atan2(m10)
 }
 
+/*
 mod rbrief {
     struct Point {
         x: i32,
@@ -182,27 +183,28 @@ mod rbrief {
     // calculate the 128 bit score for a given integral image and test_set
     // calculate said score for given integral image, angle, prerotated test_set
 }
+*/
 
 struct ScaledCorner {
     corner: corners::Corner,
     angle: f32,
-    descripton: u128,
+    // descriptor: u128,
     level: u32
 }
 
 fn find_features_in_pyramid(pyramid:&Pyramid) -> Vec<ScaledCorner> {
     let mut corners = Vec::<ScaledCorner>::new();
-    let tests = rbrief::test_set();
+    // let tests = rbrief::test_set();
     for (i, image) in pyramid.images.iter().enumerate() {
         let level_corners = find_features(image);
-        let angle = orientation(image, c.x, c.y, 3);
-        let descriptor = rbrief::describe(image, c.x, c.y, angle, i as u32, tests);
         for c in level_corners {
+            let angle = orientation(image, c.x, c.y, 3);
+            //let descriptor = rbrief::describe(image, c.x, c.y, angle, i as u32, tests);
             corners.push(
                 ScaledCorner {
                     corner: c,
                     angle: angle,
-                    descriptor: descriptor,
+                    // descriptor: descriptor,
                     level: i as u32
                 });
         }
@@ -214,6 +216,7 @@ fn find_features_in_pyramid(pyramid:&Pyramid) -> Vec<ScaledCorner> {
 mod tests {
     use super::*;
     use image::{imageops, ImageBuffer, Luma};
+    use imageproc::{geometric_transformations};
     use more_asserts::*;
 
     #[test]
@@ -292,6 +295,27 @@ mod tests {
             (-1, 2), (0, 2), (1, 2)];
         assert_eq!(&w25[..], &circular_window(2.5)[..]);
     }
+
+    #[test]
+    fn test_orientation() {
+        let mut image = GrayImage::new(20, 20);
+        imageops::horizontal_gradient(&mut image, &Luma([0]), &Luma([255]));
+        let angle = orientation(&image, 10, 10, 3);
+        assert_eq!(angle, 0.0);
+        let pi_over_4 = std::f32::consts::PI / 4.0;
+        let im_r = geometric_transformations::rotate_about_center(&image,
+                                pi_over_4,
+                                geometric_transformations::Interpolation::Nearest,
+                                Luma([0]));
+        let angle = orientation(&im_r, 10, 10, 3);
+        assert_eq!(angle, pi_over_4);
+        let im_r = geometric_transformations::rotate_about_center(&image,
+                                3.0 * pi_over_4,
+                                geometric_transformations::Interpolation::Nearest,
+                                Luma([0]));
+        let angle = orientation(&im_r, 10, 10, 3);
+        assert_eq!(angle, 3.0 * pi_over_4);
+      }
 }
 
 
