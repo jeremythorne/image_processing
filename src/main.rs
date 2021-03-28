@@ -1,55 +1,123 @@
 extern crate nalgebra as na;
 use image::{Rgba, imageops};
 use imageproc::{drawing, corners};
-//use rand::{thread_rng, Rng};
-//use rand::distributions::{Uniform};
 use std::time::SystemTime;
 use image_processing::{Pyramid, find_features, orientation};
-/*
+
 mod rbrief {
-    struct Point {
-        x: i32,
-        y: i32
+    use rand::{Rng};
+    use rand::distributions::{Uniform};
+
+    pub struct Point {
+        pub x: i32,
+        pub y: i32
     }
 
-    fn test_set() -> Vec<(Point, Point)> {
-        // 128 pairs of points in range -15 to +15
-        let mut set = Vec::<(Point, Point)>::new();
-        let mut rng = thread_rng();
-        let d = Uniform::new_inclusive(-15, 15);
-        let v: Vec<i32> = (&mut rng).sample_iter(d).take(128 * 4).collect(); 
-        for i in 0..128 {
-            set.push((Point {
-                        x:v[i * 4],
-                        y:v[i * 4 + 1]
-                     },
-                     Point {
-                        x:v[i * 4 + 2],
-                        y:v[i * 4 + 3]
-                      }));
+    pub struct PairPoint(pub Point, pub Point);
+
+    pub struct TestSet {
+        pub set: Vec<PairPoint>
+    }
+
+    impl TestSet {
+        pub fn new() -> TestSet {
+            // 128 pairs of points in range -15 to +15
+            let mut set = Vec::<PairPoint>::new();
+            let mut rng = rand::thread_rng();
+            let d = Uniform::new_inclusive(-15, 15);
+            let v: Vec<i32> = (&mut rng).sample_iter(d).take(128 * 4).collect(); 
+            for i in 0..128 {
+                set.push(PairPoint(
+                        Point {
+                            x:v[i * 4],
+                            y:v[i * 4 + 1]
+                         },
+                         Point {
+                            x:v[i * 4 + 2],
+                            y:v[i * 4 + 3]
+                          }));
+            }
+            TestSet {
+                set: set
+            }
         }
     }
 
-    fn rotate(set:Vec<(Point, Point)>, angle:f32) -> Vec<(Point, Point)> {
-        let c = cos(angle);
-        let s = sin(angle);
-        set.iter().map(|(p1, p2)|
-            (Point {
+    pub fn rotate(set:&TestSet, angle:f32) -> TestSet {
+        let c = f32::cos(angle);
+        let s = f32::sin(angle);
+        TestSet {
+            set: set.set.iter().map(|PairPoint(p1, p2)|
+                PairPoint(Point {
                         x:(c * p1.x as f32 - s * p1.y as f32) as i32,
-                        y:(s * p1.y as f32 + c * p1.y as f32) as i32,
+                        y:(s * p1.x as f32 + c * p1.y as f32) as i32,
                      },
                      Point {
                         x:(c * p2.x as f32 - s * p2.y as f32) as i32,
-                        y:(s * p2.y as f32 + c * p2.y as f32) as i32,
+                        y:(s * p2.x as f32 + c * p2.y as f32) as i32,
                       }))
             .collect()
+        }
     }
 
-    //TODO collect prerotated set at pi/30 intervals
+    pub struct RBrief {
+        sets: Vec<TestSet>,
+        angle_per_set: f32
+    }
+
+    impl RBrief {
+        fn new() -> RBrief {
+            let mut sets = Vec::<TestSet>::new();
+            sets.push(TestSet::new());
+            let alpha = std::f32::consts::PI / 30.0;
+            for i in 1..30 {
+                sets.push(rotate(&sets[0], i as f32 * alpha))
+            }
+            RBrief {
+                sets: sets,
+                angle_per_set: alpha
+            }
+        }
+    }
+
     // calculate the 128 bit score for a given integral image and test_set
     // calculate said score for given integral image, angle, prerotated test_set
 }
-*/
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::rbrief::PairPoint;
+    use more_asserts::*;
+
+    #[test]
+    fn test_rbrief_test_set() {
+        let t = rbrief::TestSet::new();
+        assert_eq!(t.set.len(), 128);
+        for PairPoint(p1, p2) in t.set.iter() {
+            assert_le!(p1.x, 15);
+            assert_le!(p1.y, 15);
+            assert_le!(p2.x, 15);
+            assert_le!(p2.y, 15);
+            assert_ge!(p1.x, -15);
+            assert_ge!(p1.y, -15);
+            assert_ge!(p2.x, -15);
+            assert_ge!(p2.y, -15);
+         }
+    }
+
+    #[test]
+    fn test_rbrief_rotate() {
+        let t = rbrief::TestSet::new();
+        let tr = rbrief::rotate(&t, std::f32::consts::PI / 2.0);
+        for i in 0..128 {
+            assert_le!((t.set[i].0.x -  tr.set[i].0.y).abs(), 1);
+            assert_le!((t.set[i].0.y - -tr.set[i].0.x).abs(), 1);
+            assert_le!((t.set[i].1.x -  tr.set[i].1.y).abs(), 1);
+            assert_le!((t.set[i].1.y - -tr.set[i].1.x).abs(), 1);
+        }
+    }
+}
+
 
 struct ScaledCorner {
     corner: corners::Corner,
