@@ -7,13 +7,30 @@ use image_processing::{Pyramid, find_features, orientation};
 mod rbrief {
     use rand::{Rng};
     use rand::distributions::{Uniform};
+    use image::{imageops, GrayImage, Luma};
+    use imageproc::integral_image;
+    use imageproc::definitions::Image;
+
+    type GrayIntegral = Image<Luma<u32>>;
 
     pub struct Point {
         pub x: i32,
         pub y: i32
     }
 
+    pub fn sample(image:&GrayIntegral, offset:&Point, p:&Point) -> u32 {
+        let l = (offset.x + p.x - 2) as u32;
+        let r = (offset.x + p.x + 2) as u32;
+        let t = (offset.y + p.y - 2) as u32;
+        let b = (offset.y + p.y + 2) as u32;
+        integral_image::sum_image_pixels(image, l, t, r, b)[0]
+    }
+
     pub struct PairPoint(pub Point, pub Point);
+
+    pub fn test(image:&GrayIntegral, offset:&Point, p:&PairPoint) -> bool {
+        sample(image, offset, &p.0) > sample(image, offset, &p.1)
+    }
 
     pub struct TestSet {
         pub set: Vec<PairPoint>
@@ -43,6 +60,16 @@ mod rbrief {
         }
     }
 
+    fn describe_with_testset(image:&GrayIntegral, p:&Point, set: &TestSet) -> u128 {
+        let mut d = 0u128;
+        for i in 0..128 {
+            if test(image, p, &set.set[i]) {
+                d |= 1 << i;
+            }
+        }
+        d
+    }
+
     pub fn rotate(set:&TestSet, angle:f32) -> TestSet {
         let c = f32::cos(angle);
         let s = f32::sin(angle);
@@ -66,7 +93,7 @@ mod rbrief {
     }
 
     impl RBrief {
-        fn new() -> RBrief {
+        pub fn new() -> RBrief {
             let mut sets = Vec::<TestSet>::new();
             sets.push(TestSet::new());
             let alpha = std::f32::consts::PI / 30.0;
@@ -78,16 +105,33 @@ mod rbrief {
                 angle_per_set: alpha
             }
         }
+
+        pub fn describe(&self, image:&GrayImage, x:u32, y:u32, angle:f32) -> Option<u128> {
+            let index = ((angle / self.angle_per_set + 0.5) as usize) % self.sets.len();
+            let r = RADIUS;
+            let (w, h) = image.dimensions();
+            if x < r || y < r || x + r > w || y + r > h {
+                return None;
+            }
+            let view = imageops::crop_imm(image, x - r, y - r, 2 * r + 1, 2 * r + 1).to_image();
+            let integral = integral_image::integral_image::<_, u32>(&view);
+            let d = describe_with_testset(&integral, &Point{x:r as i32, y:r as i32}, &self.sets[index]);
+            Some(d)
+        }
     }
 
-    // calculate the 128 bit score for a given integral image and test_set
-    // calculate said score for given integral image, angle, prerotated test_set
+    // max extents that we will sample from
+    // sample points are +/- 15 so at a radius of 15 * sqrt(2)
+    // then at each point we sample a square -2 to + 2
+    pub const RADIUS:u32 = (15.0 * std::f64::consts::SQRT_2) as u32 + 2;
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::rbrief::PairPoint;
     use more_asserts::*;
+    use image::{ImageBuffer, Luma};
+    use imageproc::integral_image;
 
     #[test]
     fn test_rbrief_test_set() {
@@ -116,29 +160,54 @@ mod tests {
             assert_le!((t.set[i].1.y - -tr.set[i].1.x).abs(), 1);
         }
     }
-}
+
+    #[test]
+    fn test_rbrief_sample() {
+        let r = rbrief::RADIUS;
+        let image = ImageBuffer::from_pixel(r * 2, r * 2, Luma([1u8]));
+        let integral = integral_image::integral_image::<_, u32>(&image);
+        assert_eq!(rbrief::sample(&integral, 
+                                  &rbrief::Point{x: r as i32, y: r as i32},
+                                  &rbrief::Point{x: 0, y:0}), 25);
+    }
+
+    #[test]
+    fn test_rbrief_test() {
+        let r = rbrief::RADIUS;
+        let mut white = ImageBuffer::from_pixel(r * 4, r * 2, Luma([255u8]));
+        let black = ImageBuffer::from_pixel(r * 2, r * 2, Luma([0u8]));
+        imageops::replace(&mut white, &black, 0, 0);
+        let integral = integral_image::integral_image::<_, u32>(&white);
+        let pair = rbrief::PairPoint(
+            rbrief::Point { x: r as i32, y: r as i32 },
+            rbrief::Point { x: 3 * r as i32, y: r as i32 });
+        assert_eq!(rbrief::test(&integral, &rbrief::Point{x: 0, y: 0}, &pair), false);
+        let pair = rbrief::PairPoint(pair.1, pair.0);
+        assert_eq!(rbrief::test(&integral, &rbrief::Point{x: 0, y: 0}, &pair), true);
+    }
+ }
 
 
 struct ScaledCorner {
     corner: corners::Corner,
     angle: f32,
-    // descriptor: u128,
+    descriptor: Option<u128>,
     level: u32
 }
 
 fn find_features_in_pyramid(pyramid:&Pyramid) -> Vec<ScaledCorner> {
     let mut corners = Vec::<ScaledCorner>::new();
-    // let tests = rbrief::test_set();
+    let tests = rbrief::RBrief::new();
     for (i, image) in pyramid.images.iter().enumerate() {
         let level_corners = find_features(image);
         for c in level_corners {
             let angle = orientation(image, c.x, c.y, 3);
-            //let descriptor = rbrief::describe(image, c.x, c.y, angle, i as u32, tests);
+            let descriptor = tests.describe(image, c.x, c.y, angle);
             corners.push(
                 ScaledCorner {
                     corner: c,
                     angle: angle,
-                    // descriptor: descriptor,
+                    descriptor: descriptor,
                     level: i as u32
                 });
         }
