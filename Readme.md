@@ -1,6 +1,7 @@
-Working towards an implementation of ORB
-https://en.wikipedia.org/wiki/Oriented_FAST_and_rotated_BRIEF
-http://www.gwylab.com/download/ORB_2012.pdf ORB: an efficient alternative to SIFT or SURF
+Working towards an implementation of [ORB](https://en.wikipedia.org/wiki/Oriented_FAST_and_rotated_BRIEF) in Rust.
+
+Original paper:
+[ORB: an efficient alternative to SIFT or SURF](http://www.gwylab.com/download/ORB_2012.pdf)
 
 status:
 * Binomial filtered Pyramid construction
