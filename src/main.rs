@@ -1,9 +1,10 @@
 extern crate nalgebra as na;
-use image::{Rgba, GrayImage, RgbaImage, imageops};
-use imageproc::{drawing, corners};
+use image::{Rgba, GrayImage, Luma, RgbaImage, imageops};
+use imageproc::{drawing, corners, geometric_transformations};
 //use std::time::SystemTime;
 mod rbrief;
 use image_processing::{Pyramid, find_features, orientation};
+use hamming_lsh;
 
 struct ScaledCorner {
     corner: corners::Corner,
@@ -51,6 +52,23 @@ fn draw_features(image:&mut RgbaImage, corners:&Vec<ScaledCorner>) {
     }
 }
 
+fn draw_matches(image:&mut RgbaImage, corners:&Vec<ScaledCorner>, matches:&Vec<Option<&ScaledCorner>>) {
+    let blue = Rgba([0u8, 0u8, 255u8, 128u8]);
+    let red = Rgba([255u8, 0u8, 0u8, 128u8]);
+    for (corner, omatch) in corners.iter().zip(matches.iter()) {
+        let s = 1 << corner.level;
+        let p = ((corner.corner.x * s) as i32, (corner.corner.y * s) as i32);
+        drawing::draw_hollow_circle_mut(image, p, 3, blue);
+        if let Some(m) = omatch {
+            let s = 1 << m.level;
+            let pm = ((m.corner.x * s) as f32, (m.corner.y * s) as f32);
+            let line_start = (p.0 as f32 , p.1 as f32);
+            let line_end = pm;
+            drawing::draw_line_segment_mut( image, line_start, line_end, red);
+        }
+    }
+}
+
 fn main() {
     println!("Hello, world!");
     let src_image =
@@ -71,8 +89,34 @@ fn main() {
 
     let corners = find_multiscale_features(&src_image);
 
+    // TODO find optimal K, L for LSH for corner data
+    let mut lsh = hamming_lsh::HammingLSH::new(11, 4);
+    
+    for c in corners.iter() {
+        if let Some(descriptor) = c.descriptor {
+            lsh.insert(descriptor, c);
+        }
+    }
+
+    let theta = std::f32::consts::PI / 30.0;
+    let im_r = geometric_transformations::rotate_about_center(&src_image,
+                            theta,
+                            geometric_transformations::Interpolation::Nearest,
+                            Luma([0]));
+
+    let corners = find_multiscale_features(&im_r);
+
+    let matches = corners.iter()
+        .map(|c| if let Some(d) = c.descriptor { lsh.get(d) } else { None })
+        .map(|m| if let Some(m) = m { Some(*m.1) } else { None })
+        .collect();
+
     let mut dst = src_image.expand_palette(&palette, None);
     draw_features(&mut dst, &corners);
-    dst.save("out.png").expect("couldn't save");
+    dst.save("features.png").expect("couldn't save");
+
+    let mut dst = im_r.expand_palette(&palette, None);
+    draw_matches(&mut dst, &corners, &matches);
+    dst.save("rotate_matches.png").expect("couldn't save");
 
 }

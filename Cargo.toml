@@ -13,3 +13,4 @@ nalgebra = "*"
 num = "0.3.0"
 more-asserts = "0.2.1"
 rand = "0.7.3"
+hamming_lsh = { path = "../hamming_lsh" }
