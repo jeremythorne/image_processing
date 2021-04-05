@@ -13,9 +13,8 @@ struct ScaledCorner {
     level: u32
 }
 
-fn find_features_in_pyramid(pyramid:&Pyramid) -> Vec<ScaledCorner> {
+fn find_features_in_pyramid(pyramid:&Pyramid, tests:&rbrief::RBrief) -> Vec<ScaledCorner> {
     let mut corners = Vec::<ScaledCorner>::new();
-    let tests = rbrief::RBrief::new();
     for (i, image) in pyramid.images.iter().enumerate() {
         let level_corners = find_features(image);
         for c in level_corners {
@@ -33,9 +32,9 @@ fn find_features_in_pyramid(pyramid:&Pyramid) -> Vec<ScaledCorner> {
     corners
 }
 
-fn find_multiscale_features(image:&GrayImage) -> Vec<ScaledCorner> {
+fn find_multiscale_features(image:&GrayImage, tests:&rbrief::RBrief) -> Vec<ScaledCorner> {
     let pyramid = Pyramid::new(&image, 4);
-    find_features_in_pyramid(&pyramid)
+    find_features_in_pyramid(&pyramid, tests)
 }
 
 fn draw_features(image:&mut RgbaImage, corners:&Vec<ScaledCorner>) {
@@ -87,10 +86,12 @@ fn main() {
         palette[i] = (g, g, g);
     }
 
-    let corners = find_multiscale_features(&src_image);
+    let tests = rbrief::RBrief::new();
+
+    let corners = find_multiscale_features(&src_image, &tests);
 
     // TODO find optimal K, L for LSH for corner data
-    let mut lsh = hamming_lsh::HammingLSH::new(11, 4);
+    let mut lsh = hamming_lsh::HammingLSH::new(4, 6);
     
     for c in corners.iter() {
         if let Some(descriptor) = c.descriptor {
@@ -104,7 +105,7 @@ fn main() {
                             geometric_transformations::Interpolation::Nearest,
                             Luma([0]));
 
-    let corners = find_multiscale_features(&im_r);
+    let corners = find_multiscale_features(&im_r, &tests);
 
     let matches = corners.iter()
         .map(|c| if let Some(d) = c.descriptor { lsh.get(d) } else { None })
