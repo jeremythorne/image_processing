@@ -99,22 +99,17 @@ fn harris_score(src:&GrayImage, x:u32, y:u32, r:u32) -> f32 {
     score
 }
 
-pub fn find_features(src:&GrayImage) -> Vec<corners::Corner> {
-    let threshold = 32;
-    let mut corners = corners::corners_fast9(src, threshold);
-    println!("threshold: {} corners: {}", threshold, corners.len());
+pub fn find_features(src:&GrayImage, threshold:u8) -> Vec<corners::Corner> {
+    let corners = corners::corners_fast9(src, threshold);
 
-    for mut corner in corners.iter_mut() {
-        let x = corner.x;
-        let y = corner.y;
-        corner.score = harris_score(src, x, y, 3);
-    }
-
-    // sort by score and pick the top half
-    corners.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
-    corners.truncate(corners.len() / 2);
-    println!("sorted and truncated to {}", corners.len());
-    corners
+    corners.iter()
+        .map(|c|
+             corners::Corner {
+                 x: c.x,
+                 y: c.y,
+                 score: harris_score(src, c.x, c.y, 3)
+            })
+    .collect()
 }
 
 pub fn orientation(image:&GrayImage, x:u32, y:u32, r:u32) -> f32 {
