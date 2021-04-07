@@ -87,10 +87,18 @@ fn main() {
 
     // find ORB corners in both and matches between the pair
     let config = Config::default();
+    
     let corners = find_multiscale_features(&src_image, &config);
+
+    #[cfg(feature = "perf")]
+    for _ in 0..100 {
+        let corners_r = find_multiscale_features(&im_r, &config);
+        let _matches = find_matches(&corners, &corners_r, &config);
+    }
+
     let corners_r = find_multiscale_features(&im_r, &config);
     let matches = find_matches(&corners, &corners_r, &config);
-
+ 
     match_stats(&corners_r, &matches);
 
     let mut dst = src_image.expand_palette(&palette, None);

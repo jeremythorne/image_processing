@@ -39,20 +39,42 @@ impl Pyramid {
             for y in 0..h {
                 let sw = w * 2;
                 let mut row = Vec::<u8>::new();
-                for sx in 0..sw {
-                    let mut sum:u32 = 0;
-                    for (a, w) in kernel.iter() {
-                        sum += (get_safe_from_image(src, sx as i32, (y as i32) * 2 + a)[0] as u32) * w;
+                let y2 = (y as i32) * 2;
+                if y2 - 2 < 0 || y2 + 2 > (h as i32) - 1 {
+                    // top / bottom where kernel overlaps image edge
+                    for sx in 0..sw {
+                        let sum = kernel.iter()
+                            .fold(0, |sum, (a, w)|
+                                sum + (get_safe_from_image(src, sx as i32, y2 + a)[0] as u32) * w);
+                        row.push((sum / divisor) as u8);
                     }
-                    row.push((sum / divisor) as u8);
+                } else {
+                    for sx in 0..sw {
+                        let sum = kernel.iter()
+                            .fold(0, |sum, (a, w)|
+                                sum + (src.get_pixel(sx as u32, (y2 + a) as u32)[0] as u32) * w);
+                        row.push((sum / divisor) as u8);
+                    }
                 }
-                for x in 0..w {
-                    let mut sum:u32 = 0;
-                    for (a, w) in kernel.iter() {
-                        sum += (get_safe_from_vec(&row, (x as i32) *2 + a) as u32) * w;
-                    }
+
+                // left / right where kernel overlaps vec ends
+                let x = 0;
+                let sum = kernel.iter()
+                    .fold(0, |sum, (a, w)|
+                        sum + (get_safe_from_vec(&row, (x as i32) *2 + a) as u32) * w);
+                dst.put_pixel(x, y, Luma([(sum / divisor) as u8]));
+                let x = w - 1;
+                let sum = kernel.iter()
+                    .fold(0, |sum, (a, w)|
+                        sum + (get_safe_from_vec(&row, (x as i32) *2 + a) as u32) * w);
+                dst.put_pixel(x, y, Luma([(sum / divisor) as u8]));
+
+                for x in 1..(w - 1) {
+                    let sum = kernel.iter()
+                        .fold(0, |sum, (a, w)|
+                            sum + (row[((x as i32) * 2 + a) as usize] as u32) * w);
                     dst.put_pixel(x, y, Luma([(sum / divisor) as u8]));
-                 }
+                }
             }
             images.push(dst);
             src = &images[images.len() - 1];
