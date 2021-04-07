@@ -13,7 +13,8 @@ struct Config {
     fast_threshold: u8,
     num_pyramid_levels: u32,
     rbrief_test_set: rbrief::RBrief,
-    lsh_k_l: (u32, u32)
+    lsh_k_l: (u32, u32),
+    lsh_max_distance: u32
 }
 
 impl Default for Config {
@@ -23,7 +24,8 @@ impl Default for Config {
             fast_threshold: 32,
             num_pyramid_levels: 4,
             rbrief_test_set: rbrief::RBrief::new(),
-            lsh_k_l: (4, 10)
+            lsh_k_l: (4, 10),
+            lsh_max_distance: 15,
         }
     }
 }
@@ -95,7 +97,8 @@ fn find_matches<'a>(a:&'a Vec<Corner>, b:&Vec<Corner>, config:&Config) -> Vec<Op
     }
 
     b.iter()
-        .map(|c| if let Some(d) = c.descriptor { lsh.get(d) } else { None })
+        .map(|c| if let Some(d) = c.descriptor { 
+            lsh.get(d, Some(config.lsh_max_distance)) } else { None })
         .map(|m| if let Some(m) = m { Some(*m.1) } else { None })
         .collect()
 }
@@ -122,11 +125,6 @@ fn draw_matches(image:&mut RgbaImage, corners:&Vec<Corner>, matches:&Vec<Option<
         let p = ((corner.corner.x * s) as i32, (corner.corner.y * s) as i32);
         drawing::draw_hollow_circle_mut(image, p, 3, blue);
         if let Some(m) = omatch {
-            let a = corner.descriptor.unwrap();
-            let b = m.descriptor.unwrap();
-            let d = hamming_lsh::hamming_distance(a, b);
-            if d > 15 { continue; }
-
             let s = 1 << m.level;
             let pm = ((m.corner.x * s) as f32, (m.corner.y * s) as f32);
             let line_start = (p.0 as f32 , p.1 as f32);
