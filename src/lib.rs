@@ -2,6 +2,8 @@ extern crate nalgebra as na;
 use image::{GrayImage, Luma, imageops};
 use imageproc::{corners, gradients};
 use num;
+mod rbrief;
+use hamming_lsh;
 
 pub struct Pyramid {
     pub images: Vec::<GrayImage>
@@ -129,6 +131,99 @@ pub fn orientation(image:&GrayImage, x:u32, y:u32, r:u32) -> f32 {
         m10 += (*i as f32) * (*p as f32);
     }
     m01.atan2(m10)
+}
+
+pub struct Config {
+    pub num_features: usize,
+    pub fast_threshold: u8,
+    pub num_pyramid_levels: u32,
+    pub rbrief_test_set: rbrief::RBrief,
+    pub lsh_k_l: (u32, u32),
+    pub lsh_max_distance: u32
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            num_features: 500,
+            fast_threshold: 32,
+            num_pyramid_levels: 4,
+            rbrief_test_set: rbrief::RBrief::new(),
+            lsh_k_l: (4, 10),
+            lsh_max_distance: 15,
+        }
+    }
+}
+
+pub struct Corner {
+    pub corner: corners::Corner,
+    pub angle: f32,
+    pub descriptor: Option<u128>,
+    pub level: u32
+}
+
+fn find_features_in_pyramid(pyramid:&Pyramid, config:&Config) -> Vec<Corner> {
+    struct LevelCorner {
+        corner: corners::Corner,
+        level: u32
+    }
+    let mut level_corners = Vec::<LevelCorner>::new();
+    
+    for (i, image) in pyramid.images.iter().enumerate() {
+        for f in find_features(image, config.fast_threshold).iter() {
+            level_corners.push(
+                LevelCorner {
+                    level: i as u32,
+                    corner: *f
+                })
+        }
+    }
+
+    // sort by score and pick the top num_features
+    level_corners.sort_by(|a, b| a.corner.score.partial_cmp(&b.corner.score).unwrap());
+    if level_corners.len() > config.num_features {
+        level_corners.truncate(config.num_features);
+    }
+
+    let tests = &config.rbrief_test_set;
+
+    fn describe_corner(pyramid:&Pyramid, tests:&rbrief::RBrief, c:&LevelCorner) -> Corner {
+        let image = &pyramid.images[c.level as usize];
+        let angle = orientation(image, c.corner.x, c.corner.y, 3);
+        let descriptor = tests.describe(image, c.corner.x, c.corner.y, angle);
+        Corner {
+            corner: c.corner,
+            angle: angle,
+            descriptor: descriptor,
+            level: c.level
+        }
+    }
+
+    level_corners.iter()
+        .map(|c| describe_corner(pyramid, tests, c))
+        .collect()
+}
+
+pub fn find_multiscale_features(image:&GrayImage, config:&Config) -> Vec<Corner> {
+    let pyramid = Pyramid::new(&image, config.num_pyramid_levels);
+    find_features_in_pyramid(&pyramid, config)
+}
+
+pub fn find_matches<'a>(a:&'a Vec<Corner>, b:&Vec<Corner>, config:&Config) -> Vec<Option<&'a Corner>> {
+    let mut lsh = hamming_lsh::HammingLSH::new(
+        config.lsh_k_l.0, config.lsh_k_l.1);
+    
+    for c in a.iter() {
+        if let Some(descriptor) = c.descriptor {
+            lsh.insert(descriptor, c);
+        }
+    }
+
+    b.iter()
+        .map(|c| if let Some(d) = c.descriptor { 
+            lsh.get(d, Some(config.lsh_max_distance)) } else { None })
+        .map(|m| if let Some(m) = m { Some(*m.1) } else { None })
+        .collect()
 }
 
 #[cfg(test)]
