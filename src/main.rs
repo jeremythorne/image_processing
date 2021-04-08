@@ -71,7 +71,9 @@ fn match_stats(corners:&Vec<Corner>, matches:&Vec<Option<&Corner>>,
     calc(&tp_distances, &mut histogram, true);
     println!("false positives:");
     calc(&fp_distances, &mut histogram, false);
-
+    println!("features: {}, matches: {}",
+             corners.len(), tp_distances.len() + fp_distances.len());
+ 
     let cumulative:Vec<(u32, u32)> =
                         histogram.iter()
                         .scan((0, 0), |s, (a, b)| {
@@ -158,6 +160,7 @@ fn main() {
 
     // find ORB corners in both and matches between the pair
     let mut config = Config::default();
+    config.lsh_k_l = (1, 1);
     config.lsh_max_distance = 128;
     
     let corners = find_multiscale_features(&src_image, &config);
