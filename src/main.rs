@@ -2,8 +2,9 @@ extern crate nalgebra as na;
 use image::{Rgba, Luma, RgbaImage, imageops};
 use imageproc::{drawing, geometric_transformations};
 //use std::time::SystemTime;
-use std::collections::HashMap;
-use itertools::Itertools;
+//use std::collections::HashMap;
+//use itertools::Itertools;
+use std::ops::IndexMut;
 use image_processing::{Config, Corner, find_multiscale_features, find_matches};
 
 fn draw_features(image:&mut RgbaImage, corners:&Vec<Corner>) {
@@ -50,18 +51,8 @@ fn match_stats(corners:&Vec<Corner>, matches:&Vec<Option<&Corner>>,
                transform: (u32, u32, f32)) {
     let (w, h, theta) = transform;
 
-    struct Stats {
-        distances: Vec<u32>
-    };
-    
-    let mut tp_distances = 
-        Stats {
-            distances: Vec::<u32>::new()
-        };
-    let mut fp_distances = 
-        Stats {
-            distances: Vec::<u32>::new()
-        };
+    let mut tp_distances = Vec::<u32>::new();
+    let mut fp_distances = Vec::<u32>::new();
 
     for (corner, omatch) in corners.iter().zip(matches.iter()) {
         if let Some(m) = omatch {
@@ -72,28 +63,45 @@ fn match_stats(corners:&Vec<Corner>, matches:&Vec<Option<&Corner>>,
             let true_positive = (e.0 as i32 - m.corner.x as i32).abs() < 2 
                              && (e.1 as i32 - m.corner.y as i32).abs() < 2;
             let stats = if true_positive { &mut tp_distances } else { &mut fp_distances };
-            stats.distances.push(d);
+            stats.push(d);
         }
     }
-    println!("histogram of hamming distances between matches and original features");
+    let mut histogram = vec![(0, 0); 128];
     println!("true positives:");
-    calc(&tp_distances);
+    calc(&tp_distances, &mut histogram, true);
     println!("false positives:");
-    calc(&fp_distances);
+    calc(&fp_distances, &mut histogram, false);
 
-    fn calc(stats:&Stats) {
-        let mut distances = HashMap::<u32, u32>::new();
-        for d in stats.distances.iter() {
-             let count = distances.entry(d / 5).or_insert(1);
-            *count += 1;  
+    let cumulative:Vec<(u32, u32)> =
+                        histogram.iter()
+                        .scan((0, 0), |s, (a, b)| {
+                              s.0 += a;
+                              s.1 += b;
+                              Some(*s)})
+                        .collect();
+
+    let score:Vec<i32> = cumulative.iter()
+                    .map(|(tp, fp)| (*tp as i32) - (*fp as i32))
+                    .collect();
+
+    let threshold = score.iter()
+                    .enumerate()
+                    .max_by_key(|(_, &value)| value)
+                    .map(|(idx, _)| idx)
+                    .unwrap();
+
+    println!("an hamming distance threshold of {} would maximise true - false positives",
+             threshold);
+
+    fn calc(distances:&Vec<u32>, histogram:&mut Vec<(u32, u32)>, i:bool) {
+        for d in distances.iter() {
+            let mut count = histogram.index_mut(*d as usize);
+            if i { count.0 += 1; } else { count.1 += 1};
         }
-        for k in distances.keys().sorted() {
-            println!("distance {} - {} : {}", k * 5, (k + 1) * 5, distances.get(k).unwrap());
-        }
-        let mean = stats.distances.iter().fold(0.0, |s, d| s + *d as f32) / stats.distances.len() as f32;
-        let var = stats.distances.iter().fold(0.0, |v, d| v + (*d as f32 - mean) * (*d as f32 - mean)) / stats.distances.len() as f32;
+        let mean = distances.iter().fold(0.0, |s, d| s + *d as f32) / distances.len() as f32;
+        let var = distances.iter().fold(0.0, |v, d| v + (*d as f32 - mean) * (*d as f32 - mean)) / distances.len() as f32;
         let stddev = var.sqrt();
-        println!("mean: {}, stddev: {}", mean, stddev);
+        println!("count: {}, mean: {}, stddev: {}", distances.len(), mean, stddev);
     }
 }
 
