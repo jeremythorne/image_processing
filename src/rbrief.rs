@@ -6,6 +6,7 @@ use imageproc::definitions::Image;
 
 type GrayIntegral = Image<Luma<u32>>;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Point {
     pub x: i32,
     pub y: i32
@@ -19,7 +20,42 @@ pub fn sample(image:&GrayIntegral, offset:&Point, p:&Point) -> u32 {
     integral_image::sum_image_pixels(image, l, t, r, b)[0]
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct PairPoint(pub Point, pub Point);
+
+impl PairPoint {
+    fn all_pairs() -> RBriefPairIter {
+        PairPoint ( 
+            Point { x: -MAX, y: -MAX },
+            Point { x: -MAX + WINDOW, y: -MAX }
+        ).iter()
+    }
+
+    fn from(a:i32, b:i32, c:i32, d:i32) -> PairPoint {
+        PairPoint ( 
+            Point { x: a, y: b },
+            Point { x: c, y: d }
+        )
+    }
+
+    fn overlaps(&self) -> bool {
+        let w = WINDOW;
+        (self.0.x - self.1.x).abs() < w && (self.0.y - self.1.y).abs() < w
+    }
+
+    fn valid(&self) -> bool {
+        self.0.x.abs() <= MAX
+            && self.0.y.abs() <= MAX
+            && self.1.x.abs() <= MAX
+            && self.1.y.abs() <= MAX
+    }
+
+    fn iter(&self) -> RBriefPairIter {
+        RBriefPairIter {
+            pair: (*self).clone() 
+        }
+    }
+}
 
 pub fn test(image:&GrayIntegral, offset:&Point, p:&PairPoint) -> bool {
     sample(image, offset, &p.0) > sample(image, offset, &p.1)
@@ -31,10 +67,10 @@ pub struct TestSet {
 
 impl TestSet {
     pub fn new() -> TestSet {
-        // 128 pairs of points in range -15 to +15
+        // 128 pairs of points in range -13 to +13
         let mut set = Vec::<PairPoint>::new();
         let mut rng = rand::thread_rng();
-        let d = Uniform::new_inclusive(-15, 15);
+        let d = Uniform::new_inclusive(-MAX, MAX);
         let v: Vec<i32> = (&mut rng).sample_iter(d).take(128 * 4).collect(); 
         for i in 0..128 {
             set.push(PairPoint(
@@ -113,10 +149,53 @@ impl RBrief {
     }
 }
 
+
+
+struct RBriefPairIter {
+    pair: PairPoint
+}
+
+impl Iterator for RBriefPairIter {
+    type Item = PairPoint;
+    fn next(&mut self) -> Option<PairPoint> {
+        if !self.pair.valid() {
+            println!("end {:?}", self.pair);
+            None
+        } else {
+            let ret = Some(self.pair.clone());
+            loop {
+                if self.pair.1.x < MAX {
+                    self.pair.1.x += 1;
+                } else if self.pair.1.y < MAX {
+                    self.pair.1.y += 1;
+                    self.pair.1.x = -MAX;
+                } else if self.pair.0.x < MAX {
+                    self.pair.0.x += 1;
+                    self.pair.1.y = self.pair.0.y;
+                    self.pair.1.x = self.pair.0.x;
+                } else {
+                    self.pair.0.y += 1;
+                    self.pair.0.x = -MAX;
+                    self.pair.1.y = self.pair.0.y;
+                    self.pair.1.x = self.pair.0.x;
+                }
+                if !self.pair.overlaps() {
+                    break;
+                }
+            }
+            ret
+        }
+    }
+}
+
 // max extents that we will sample from
 // sample points are +/- 15 so at a radius of 15 * sqrt(2)
 // then at each point we sample a square -2 to + 2
-pub const RADIUS:u32 = (15.0 * std::f64::consts::SQRT_2) as u32 + 2;
+pub const HWIDTH:u32 = 15;
+pub const HWINDOW:u32 = 2;
+pub const WINDOW:i32 = HWINDOW as i32 * 2 + 1;
+pub const MAX:i32 = (HWIDTH - HWINDOW) as i32;
+pub const RADIUS:u32 = (HWIDTH as f64 * std::f64::consts::SQRT_2) as u32 + HWINDOW;
 
 #[cfg(test)]
 mod tests {
@@ -131,14 +210,14 @@ mod tests {
         let t = TestSet::new();
         assert_eq!(t.set.len(), 128);
         for PairPoint(p1, p2) in t.set.iter() {
-            assert_le!(p1.x, 15);
-            assert_le!(p1.y, 15);
-            assert_le!(p2.x, 15);
-            assert_le!(p2.y, 15);
-            assert_ge!(p1.x, -15);
-            assert_ge!(p1.y, -15);
-            assert_ge!(p2.x, -15);
-            assert_ge!(p2.y, -15);
+            assert_le!(p1.x, MAX);
+            assert_le!(p1.y, MAX);
+            assert_le!(p2.x, MAX);
+            assert_le!(p2.y, MAX);
+            assert_ge!(p1.x, -MAX);
+            assert_ge!(p1.y, -MAX);
+            assert_ge!(p2.x, -MAX);
+            assert_ge!(p2.y, -MAX);
          }
     }
 
@@ -177,6 +256,23 @@ mod tests {
         assert_eq!(test(&integral, &Point{x: 0, y: 0}, &pair), false);
         let pair = PairPoint(pair.1, pair.0);
         assert_eq!(test(&integral, &Point{x: 0, y: 0}, &pair), true);
+    }
+
+    #[test]
+    fn test_rbrief_all_pairs() {
+        let mut i = PairPoint::all_pairs();
+        assert_eq!(i.next(), Some(PairPoint::from(-MAX, -MAX, -MAX + WINDOW, -MAX)));
+        assert_eq!(i.next(), Some(PairPoint::from(-MAX, -MAX, -MAX + WINDOW + 1, -MAX)));
+        let mut i = PairPoint::from(MAX, 12, MAX, MAX).iter();
+        let _p = i.next();
+        assert_eq!(i.next(), Some(PairPoint::from( -MAX, MAX, -MAX + WINDOW, MAX)));
+        let mut i = PairPoint::from(MAX - WINDOW, MAX, MAX, MAX).iter();
+        let _p = i.next();
+        assert_eq!(i.next(), None);
+        // ORB 2012 makes this 205590, but I think they are wrong
+        // they appear to do -MAX to MAX non inclusive - which with a 5x5 sub window only extends
+        // from -15 to 14 inclusive i.e. a 30x30 patch, not 31x31.
+        assert_eq!(PairPoint::all_pairs().count(), 240856);
     }
 }
 
