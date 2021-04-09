@@ -197,6 +197,46 @@ pub const WINDOW:i32 = HWINDOW as i32 * 2 + 1;
 pub const MAX:i32 = (HWIDTH - HWINDOW) as i32;
 pub const RADIUS:u32 = (HWIDTH as f64 * std::f64::consts::SQRT_2) as u32 + HWINDOW;
 
+struct BitVec {
+    vec:Vec<u8>,
+    bit:u8
+}
+
+impl BitVec {
+    fn new() -> BitVec {
+        BitVec {
+            vec: vec![0u8],
+            bit: 0
+        }
+    }
+
+    fn push(&mut self, a:bool) {
+        let v = if a { 1 } else { 0 };
+        let i = self.vec.len() - 1;
+        self.vec[i] |= v << self.bit;
+        if self.bit < 7 {
+            self.bit += 1;
+        } else {
+            self.vec.push(0u8);
+            self.bit = 0;
+        }
+    }
+
+    fn len(&self) -> usize {
+        (self.vec.len() - 1) * 8 + self.bit as usize
+    }
+
+    fn mean(&self) -> f32 {
+        hamming::weight(&self.vec) as f32 /
+            self.len() as f32
+    }
+
+    fn correlation(&self, b:&BitVec) -> f32 {
+        hamming::distance(&self.vec, &b.vec) as f32 /
+            self.len() as f32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +314,29 @@ mod tests {
         // from -15 to 14 inclusive i.e. a 30x30 patch, not 31x31.
         assert_eq!(PairPoint::all_pairs().count(), 240856);
     }
+    
+    #[test]
+    fn test_bit_vec() {
+        let mut b = BitVec::new();
+        b.push(true);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b.mean(), 1.0);
+        b.push(false);
+        assert_eq!(b.mean(), 0.5);
+        let mut b = BitVec::new();
+        for _i in 0..8 {
+            b.push(true);
+            b.push(false);
+        }
+        assert_eq!(b.len(), 16);
+        assert_eq!(b.mean(), 0.5);
+        let mut c = BitVec::new();
+        for _i in 0..8 {
+            c.push(true);
+            c.push(true);
+        }
+        assert_eq!(b.correlation(&c), 0.5);
+     }
 }
 
 
