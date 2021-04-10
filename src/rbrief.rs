@@ -3,6 +3,7 @@ use rand::distributions::{Uniform};
 use image::{imageops, GrayImage, Luma};
 use imageproc::integral_image;
 use imageproc::definitions::Image;
+use ordered_float::OrderedFloat;
 
 type GrayIntegral = Image<Luma<u32>>;
 
@@ -116,6 +117,17 @@ pub fn rotate(set:&TestSet, angle:f32) -> TestSet {
     }
 }
 
+fn make_integral_image(image:&GrayImage, x:u32, y:u32) -> Option<GrayIntegral> {
+    let r = RADIUS;
+    let (w, h) = image.dimensions();
+    if x < r || y < r || x + r > w || y + r > h {
+        return None;
+    }
+    let view = imageops::crop_imm(image, x - r, y - r, 2 * r + 1, 2 * r + 1).to_image();
+    let integral = integral_image::integral_image::<_, u32>(&view);
+    Some(integral)
+}
+
 pub struct RBrief {
     sets: Vec<TestSet>,
     angle_per_set: f32
@@ -138,18 +150,14 @@ impl RBrief {
     pub fn describe(&self, image:&GrayImage, x:u32, y:u32, angle:f32) -> Option<u128> {
         let index = ((angle / self.angle_per_set + 0.5) as usize) % self.sets.len();
         let r = RADIUS;
-        let (w, h) = image.dimensions();
-        if x < r || y < r || x + r > w || y + r > h {
-            return None;
+        if let Some(integral) = make_integral_image(image, x, y) {
+            let d = describe_with_testset(&integral, &Point{x:r as i32, y:r as i32}, &self.sets[index]);
+            Some(d)
+        } else { 
+            None
         }
-        let view = imageops::crop_imm(image, x - r, y - r, 2 * r + 1, 2 * r + 1).to_image();
-        let integral = integral_image::integral_image::<_, u32>(&view);
-        let d = describe_with_testset(&integral, &Point{x:r as i32, y:r as i32}, &self.sets[index]);
-        Some(d)
     }
 }
-
-
 
 struct RBriefPairIter {
     pair: PairPoint
@@ -197,6 +205,7 @@ pub const WINDOW:i32 = HWINDOW as i32 * 2 + 1;
 pub const MAX:i32 = (HWIDTH - HWINDOW) as i32;
 pub const RADIUS:u32 = (HWIDTH as f64 * std::f64::consts::SQRT_2) as u32 + HWINDOW;
 
+#[derive(Clone)]
 struct BitVec {
     vec:Vec<u8>,
     bit:u8
@@ -234,6 +243,59 @@ impl BitVec {
     fn correlation(&self, b:&BitVec) -> f32 {
         hamming::distance(&self.vec, &b.vec) as f32 /
             self.len() as f32
+    }
+}
+
+struct Trainer {
+    scores:Vec<BitVec>
+}
+
+impl Trainer {
+    fn new() -> Trainer {
+        let c = PairPoint::all_pairs().count();
+        Trainer {
+            scores: vec![BitVec::new(); c]
+        }
+    }
+
+    fn accumulate(&mut self, image:&GrayImage, x:u32, y:u32) {
+        let r = RADIUS as i32;
+        if let Some(integral) = make_integral_image(image, x, y) {
+            for (i, pair) in PairPoint::all_pairs().enumerate() {
+                self.scores[i].push(test(&integral, &Point{x:r, y:r}, &pair));
+            }
+        }
+    }
+
+    fn make_test_set(&self) -> TestSet {
+        let mut threshold = 0.5;
+        let mut r:Vec<(PairPoint, &BitVec)>;
+        loop {
+            let mut t = Vec::<(PairPoint, &BitVec)>::new();
+            for (i, pair) in PairPoint::all_pairs().enumerate() {
+                t.push((pair, &self.scores[i]));
+            }
+            t.sort_by_key(|k| OrderedFloat((0.5 - k.1.mean()).abs()));
+            t.reverse();
+            r = Vec::<(PairPoint, &BitVec)>::new();
+            r.push(t.pop().unwrap());
+            while r.len() < 128 && t.len() > 0 {
+                let a = t.pop().unwrap();
+                let c = r.iter().fold(0.0, |s, b| s + b.1.correlation(a.1));
+                if c < threshold {
+                    r.push(a);
+                }
+            }
+            println!("threshold {} collected {} tests", threshold, r.len());
+            if r.len() == 128 {
+                break;
+            }
+            threshold *= 0.9;
+        }
+        let tests = r.iter().map(|(p, _b)| p.clone()).collect();
+        TestSet {
+            set: tests
+        }
     }
 }
 

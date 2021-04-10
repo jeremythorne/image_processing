@@ -19,6 +19,7 @@ hamming = "0.1.0"
 nalgebra = "*"
 num = "0.3.0"
 more-asserts = "0.2.1"
+ordered-float = "2.0"
 rand = "0.7.3"
 itertools = "0.10.0"
 hamming_lsh = { path = "../hamming_lsh" }
