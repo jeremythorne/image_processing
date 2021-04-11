@@ -321,7 +321,7 @@ impl Trainer {
             if r.len() == 128 {
                 break;
             }
-            threshold *= 1.1;
+            threshold += 0.01;
         }
 
         fn stat(v:&Vec<(PairPoint, &BitVec)>) {
