@@ -282,6 +282,8 @@ impl Trainer {
     }
 
     pub fn accumulate(&mut self, image:&GrayImage, x:u32, y:u32, angle:f32) {
+        let alpha = std::f32::consts::PI / 30.0;
+        let angle = ((angle / alpha + 0.5) as usize) as f32 * alpha;
         let r = RADIUS as i32;
         if let Some(integral) = make_integral_image(image, x, y) {
             for (i, pair) in PairPoint::all_pairs().enumerate() {
