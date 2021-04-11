@@ -2,7 +2,7 @@ use rand::{Rng};
 use rand::seq::SliceRandom;
 use rand::distributions::{Uniform};
 use image::{imageops, GrayImage, Luma};
-use imageproc::{integral_image, geometric_transformations};
+use imageproc::{integral_image};
 use imageproc::definitions::Image;
 use ordered_float::OrderedFloat;
 use serde::{Serialize, Deserialize};
@@ -58,6 +58,20 @@ impl PairPoint {
         RBriefPairIter {
             pair: (*self).clone() 
         }
+    }
+
+    fn rotate(&self, costheta:f32, sintheta:f32) -> PairPoint {
+        let (c, s) = (costheta, sintheta);
+        let (p1, p2) = (&self.0, &self.1);
+        PairPoint(
+             Point {
+                    x:(c * p1.x as f32 - s * p1.y as f32) as i32,
+                    y:(s * p1.x as f32 + c * p1.y as f32) as i32,
+             },
+             Point {
+                x:(c * p2.x as f32 - s * p2.y as f32) as i32,
+                y:(s * p2.x as f32 + c * p2.y as f32) as i32,
+             })
     }
 }
 
@@ -117,16 +131,9 @@ pub fn rotate(set:&TestSet, angle:f32) -> TestSet {
     let c = f32::cos(angle);
     let s = f32::sin(angle);
     TestSet {
-        set: set.set.iter().map(|PairPoint(p1, p2)|
-            PairPoint(Point {
-                    x:(c * p1.x as f32 - s * p1.y as f32) as i32,
-                    y:(s * p1.x as f32 + c * p1.y as f32) as i32,
-                 },
-                 Point {
-                    x:(c * p2.x as f32 - s * p2.y as f32) as i32,
-                    y:(s * p2.x as f32 + c * p2.y as f32) as i32,
-                  }))
-        .collect()
+        set: set.set.iter()
+            .map(|p| p.rotate(c, s))
+            .collect()
     }
 }
 
@@ -140,24 +147,6 @@ fn make_integral_image(image:&GrayImage, x:u32, y:u32) -> Option<GrayIntegral> {
     let integral = integral_image::integral_image::<_, u32>(&view);
     Some(integral)
 }
-
-fn make_rotated_integral_image(image:&GrayImage, x:u32, y:u32, orientation:f32) -> Option<GrayIntegral> {
-    let r = RADIUS;
-    let (w, h) = image.dimensions();
-    if x < r || y < r || x + r > w || y + r > h {
-        return None;
-    }
-    let view = imageops::crop_imm(image, x - r, y - r, 2 * r + 1, 2 * r + 1).to_image();
-    let image = geometric_transformations::rotate_about_center(&view,
-                        orientation,
-                        geometric_transformations::Interpolation::Nearest,
-                        Luma([0]));
-
-    let integral = integral_image::integral_image::<_, u32>(&image);
-    Some(integral)
-}
-
-
 
 pub struct RBrief {
     sets: Vec<TestSet>,
@@ -275,8 +264,8 @@ impl BitVec {
     }
 
     fn correlation(&self, b:&BitVec) -> f32 {
-        hamming::distance(&self.vec, &b.vec) as f32 /
-            self.len() as f32
+        1.0 - (hamming::distance(&self.vec, &b.vec) as f32 /
+            self.len() as f32)
     }
 }
 
@@ -292,10 +281,13 @@ impl Trainer {
         }
     }
 
-    pub fn accumulate(&mut self, image:&GrayImage, x:u32, y:u32, orientation:f32) {
+    pub fn accumulate(&mut self, image:&GrayImage, x:u32, y:u32, angle:f32) {
         let r = RADIUS as i32;
-        if let Some(integral) = make_rotated_integral_image(image, x, y, -orientation) {
+        if let Some(integral) = make_integral_image(image, x, y) {
             for (i, pair) in PairPoint::all_pairs().enumerate() {
+                let c = f32::cos(angle);
+                let s = f32::sin(angle);
+                let pair = pair.rotate(c, s);
                 self.scores[i].push(test(&integral, &Point{x:r, y:r}, &pair));
             }
         }
