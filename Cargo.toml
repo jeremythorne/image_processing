@@ -10,6 +10,7 @@ edition = "2018"
 debug = true
 
 [features]
+train = []
 perf = []
 
 [dependencies]
@@ -21,5 +22,7 @@ num = "0.3.0"
 more-asserts = "0.2.1"
 ordered-float = "2.0"
 rand = "0.7.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 itertools = "0.10.0"
 hamming_lsh = { path = "../hamming_lsh" }

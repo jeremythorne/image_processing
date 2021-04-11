@@ -2,7 +2,7 @@ extern crate nalgebra as na;
 use image::{GrayImage, Luma, imageops};
 use imageproc::{corners, gradients};
 use num;
-mod rbrief;
+pub mod rbrief;
 use hamming_lsh;
 
 pub struct Pyramid {
@@ -170,7 +170,8 @@ impl Default for Config {
             num_features: 500,
             fast_threshold: 32,
             num_pyramid_levels: 4,
-            rbrief_test_set: rbrief::RBrief::new(),
+            rbrief_test_set: rbrief::RBrief::from_test_set(
+                rbrief::TestSet::load("res/trained_test_set.json").unwrap()),
             lsh_k_l: (4, 10),
             lsh_max_distance: 15,
         }
@@ -184,11 +185,12 @@ pub struct Corner {
     pub level: u32
 }
 
-fn find_features_in_pyramid(pyramid:&Pyramid, config:&Config) -> Vec<Corner> {
-    struct LevelCorner {
-        corner: corners::Corner,
-        level: u32
-    }
+struct LevelCorner {
+    corner: corners::Corner,
+    level: u32
+}
+
+fn find_features_in_pyramid(pyramid:&Pyramid, config:&Config) -> Vec<LevelCorner> {
     let mut level_corners = Vec::<LevelCorner>::new();
     
     for (i, image) in pyramid.images.iter().enumerate() {
@@ -206,7 +208,11 @@ fn find_features_in_pyramid(pyramid:&Pyramid, config:&Config) -> Vec<Corner> {
     if level_corners.len() > config.num_features {
         level_corners.truncate(config.num_features);
     }
+    level_corners
+}
 
+fn find_and_describe_features_in_pyramid(pyramid:&Pyramid, config:&Config) -> Vec<Corner> {
+    let level_corners = find_features_in_pyramid(pyramid, config);
     let tests = &config.rbrief_test_set;
 
     fn describe_corner(pyramid:&Pyramid, tests:&rbrief::RBrief, c:&LevelCorner) -> Corner {
@@ -228,7 +234,7 @@ fn find_features_in_pyramid(pyramid:&Pyramid, config:&Config) -> Vec<Corner> {
 
 pub fn find_multiscale_features(image:&GrayImage, config:&Config) -> Vec<Corner> {
     let pyramid = Pyramid::new(&image, config.num_pyramid_levels);
-    find_features_in_pyramid(&pyramid, config)
+    find_and_describe_features_in_pyramid(&pyramid, config)
 }
 
 pub fn find_matches<'a>(a:&'a Vec<Corner>, b:&Vec<Corner>, config:&Config) -> Vec<Option<&'a Corner>> {
@@ -246,6 +252,16 @@ pub fn find_matches<'a>(a:&'a Vec<Corner>, b:&Vec<Corner>, config:&Config) -> Ve
             lsh.get(d, Some(config.lsh_max_distance)) } else { None })
         .map(|m| if let Some(m) = m { Some(*m.1) } else { None })
         .collect()
+}
+
+pub fn add_image_to_trainer(trainer:&mut rbrief::Trainer, image:&GrayImage, config:&Config) {
+    let pyramid = Pyramid::new(&image, config.num_pyramid_levels);
+    let level_corners = find_features_in_pyramid(&pyramid, config);
+    for c in level_corners {
+        let im = &pyramid.images[c.level as usize];
+        let angle = orientation(im, c.corner.x, c.corner.y, 3);
+        trainer.accumulate(im, c.corner.x, c.corner.y, angle);
+    }
 }
 
 #[cfg(test)]

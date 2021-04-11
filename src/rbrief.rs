@@ -1,13 +1,16 @@
 use rand::{Rng};
+use rand::seq::SliceRandom;
 use rand::distributions::{Uniform};
 use image::{imageops, GrayImage, Luma};
-use imageproc::integral_image;
+use imageproc::{integral_image, geometric_transformations};
 use imageproc::definitions::Image;
 use ordered_float::OrderedFloat;
+use serde::{Serialize, Deserialize};
+use std::{error, fs};
 
 type GrayIntegral = Image<Luma<u32>>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Point {
     pub x: i32,
     pub y: i32
@@ -21,7 +24,7 @@ pub fn sample(image:&GrayIntegral, offset:&Point, p:&Point) -> u32 {
     integral_image::sum_image_pixels(image, l, t, r, b)[0]
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PairPoint(pub Point, pub Point);
 
 impl PairPoint {
@@ -62,9 +65,12 @@ pub fn test(image:&GrayIntegral, offset:&Point, p:&PairPoint) -> bool {
     sample(image, offset, &p.0) > sample(image, offset, &p.1)
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct TestSet {
     pub set: Vec<PairPoint>
 }
+
+type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
 
 impl TestSet {
     pub fn new() -> TestSet {
@@ -74,19 +80,26 @@ impl TestSet {
         let d = Uniform::new_inclusive(-MAX, MAX);
         let v: Vec<i32> = (&mut rng).sample_iter(d).take(128 * 4).collect(); 
         for i in 0..128 {
-            set.push(PairPoint(
-                    Point {
-                        x:v[i * 4],
-                        y:v[i * 4 + 1]
-                     },
-                     Point {
-                        x:v[i * 4 + 2],
-                        y:v[i * 4 + 3]
-                      }));
+            set.push(PairPoint::from(
+                        v[i * 4], v[i * 4 + 1], v[i * 4 + 2], v[i * 4 + 3]));
         }
         TestSet {
             set: set
         }
+    }
+
+    pub fn save(&self, filename:&str) -> Result<()> {
+        let serialized = serde_json::to_string(&self.set)?;
+        fs::write(filename, serialized)?;
+        Ok(())
+    }
+
+    pub fn load(filename:&str) -> Result<TestSet> {
+        let serialized = fs::read_to_string(filename)?;
+        let deserialized = serde_json::from_str(&serialized)?;
+        Ok(TestSet {
+            set: deserialized
+        })
     }
 }
 
@@ -128,15 +141,33 @@ fn make_integral_image(image:&GrayImage, x:u32, y:u32) -> Option<GrayIntegral> {
     Some(integral)
 }
 
+fn make_rotated_integral_image(image:&GrayImage, x:u32, y:u32, orientation:f32) -> Option<GrayIntegral> {
+    let r = RADIUS;
+    let (w, h) = image.dimensions();
+    if x < r || y < r || x + r > w || y + r > h {
+        return None;
+    }
+    let view = imageops::crop_imm(image, x - r, y - r, 2 * r + 1, 2 * r + 1).to_image();
+    let image = geometric_transformations::rotate_about_center(&view,
+                        orientation,
+                        geometric_transformations::Interpolation::Nearest,
+                        Luma([0]));
+
+    let integral = integral_image::integral_image::<_, u32>(&image);
+    Some(integral)
+}
+
+
+
 pub struct RBrief {
     sets: Vec<TestSet>,
     angle_per_set: f32
 }
 
 impl RBrief {
-    pub fn new() -> RBrief {
+    pub fn from_test_set(set:TestSet) -> RBrief {
         let mut sets = Vec::<TestSet>::new();
-        sets.push(TestSet::new());
+        sets.push(set);
         let alpha = std::f32::consts::PI / 30.0;
         for i in 1..30 {
             sets.push(rotate(&sets[0], i as f32 * alpha))
@@ -145,6 +176,10 @@ impl RBrief {
             sets: sets,
             angle_per_set: alpha
         }
+    }
+
+    pub fn new() -> RBrief {
+        RBrief::from_test_set(TestSet::new())
     }
 
     pub fn describe(&self, image:&GrayImage, x:u32, y:u32, angle:f32) -> Option<u128> {
@@ -167,7 +202,6 @@ impl Iterator for RBriefPairIter {
     type Item = PairPoint;
     fn next(&mut self) -> Option<PairPoint> {
         if !self.pair.valid() {
-            println!("end {:?}", self.pair);
             None
         } else {
             let ret = Some(self.pair.clone());
@@ -246,37 +280,40 @@ impl BitVec {
     }
 }
 
-struct Trainer {
+pub struct Trainer {
     scores:Vec<BitVec>
 }
 
 impl Trainer {
-    fn new() -> Trainer {
+    pub fn new() -> Trainer {
         let c = PairPoint::all_pairs().count();
         Trainer {
             scores: vec![BitVec::new(); c]
         }
     }
 
-    fn accumulate(&mut self, image:&GrayImage, x:u32, y:u32) {
+    pub fn accumulate(&mut self, image:&GrayImage, x:u32, y:u32, orientation:f32) {
         let r = RADIUS as i32;
-        if let Some(integral) = make_integral_image(image, x, y) {
+        if let Some(integral) = make_rotated_integral_image(image, x, y, -orientation) {
             for (i, pair) in PairPoint::all_pairs().enumerate() {
                 self.scores[i].push(test(&integral, &Point{x:r, y:r}, &pair));
             }
         }
     }
 
-    fn make_test_set(&self) -> TestSet {
-        let mut threshold = 0.5;
+    pub fn make_test_set(&self) -> TestSet {
+        let mut threshold = 10.0;
         let mut r:Vec<(PairPoint, &BitVec)>;
+        let mut sorted = Vec::<(PairPoint, &BitVec)>::new();
+        for (i, pair) in PairPoint::all_pairs().enumerate() {
+            sorted.push((pair, &self.scores[i]));
+        }
+        sorted.sort_by_key(|k| OrderedFloat((0.5 - k.1.mean()).abs()));
+        //reverse list so we can "pop" off the end
+        sorted.reverse();
+        
         loop {
-            let mut t = Vec::<(PairPoint, &BitVec)>::new();
-            for (i, pair) in PairPoint::all_pairs().enumerate() {
-                t.push((pair, &self.scores[i]));
-            }
-            t.sort_by_key(|k| OrderedFloat((0.5 - k.1.mean()).abs()));
-            t.reverse();
+            let mut t = sorted.clone();
             r = Vec::<(PairPoint, &BitVec)>::new();
             r.push(t.pop().unwrap());
             while r.len() < 128 && t.len() > 0 {
@@ -290,8 +327,35 @@ impl Trainer {
             if r.len() == 128 {
                 break;
             }
-            threshold *= 0.9;
+            threshold *= 1.1;
         }
+
+        fn stat(v:&Vec<(PairPoint, &BitVec)>) {
+            let dist:Vec<f32> = v.iter().map(|b| (0.5 - b.1.mean()).abs()).collect();
+            let mean = dist.iter().sum::<f32>() / dist.len() as f32;
+            let var = dist.iter().fold(0.0, |s, b| s + (b - mean) * (b - mean)) / dist.len() as f32;
+            let stddev = var.sqrt();
+            println!("distance from 0.5 mean: {} stddev: {}", mean, stddev);
+            let mut correlation = 0.0;
+            for (i, a) in v.iter().enumerate() {
+                correlation += v.iter().enumerate()
+                                .fold(0.0, |s, (j, b)|
+                                    if i != j {
+                                        s + a.1.correlation(b.1)
+                                    } else { s } ) / (v.len() - 1) as f32;
+            }
+            correlation /= v.len() as f32;
+            println!("mean correlation: {}", correlation);
+        }
+
+        println!("of collected tests:");
+        stat(&r);
+
+        println!("of a random sample of all tests:");
+        let mut rng = &mut rand::thread_rng();
+        let sample = sorted.choose_multiple(&mut rng, r.len()).cloned().collect();
+        stat(&sample);
+
         let tests = r.iter().map(|(p, _b)| p.clone()).collect();
         TestSet {
             set: tests

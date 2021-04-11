@@ -5,7 +5,8 @@ use imageproc::{drawing, geometric_transformations};
 //use std::collections::HashMap;
 //use itertools::Itertools;
 use std::ops::IndexMut;
-use image_processing::{Config, Corner, find_multiscale_features, find_matches};
+use image_processing::{Config, Corner, add_image_to_trainer, find_multiscale_features, find_matches};
+use image_processing::rbrief;
 
 fn draw_features(image:&mut RgbaImage, corners:&Vec<Corner>) {
     let blue = Rgba([0u8, 0u8, 255u8, 128u8]);
@@ -107,10 +108,8 @@ fn match_stats(corners:&Vec<Corner>, matches:&Vec<Option<&Corner>>,
     }
 }
 
-
-/*
 fn train_rbrief() {
-    // need to accumulate a bit array for every pair in 31x31 rect
+    // accumulate a bit array for every pair in 31x31 rect
     // for each image
     //   find features
     //   for every feature
@@ -121,11 +120,33 @@ fn train_rbrief() {
     // then perform greedy algorithm described in paper where 
     // mean = hamming::weight(t) / num_images
     // correlation = sum_over_R(hamming::distance(Ri, t))
+
+    println!("training rBrief descriptor test set");
+    // open the source image as greyscale
+    let src_image =
+        image::open("res/im0.png").expect("failed to open image")
+            .into_luma8();
+
+    // resize to ~ 640x480
+    let (mut w, mut h) = src_image.dimensions();
+    h = h * 640 / w;
+    w = 640;
+    let image = imageops::resize(&src_image,
+        w, h, imageops::FilterType::CatmullRom);
+    
+    let config = Config::default();
+    let mut trainer = rbrief::Trainer::new();
+
+    add_image_to_trainer(&mut trainer, &image, &config);
+
+    trainer.make_test_set().save("trained_test_set.json").expect("failed to save trained set");
 }
-*/
 
 fn main() {
     println!("Hello, world!");
+
+    #[cfg(feature = "train")]
+    train_rbrief();
 
     // make a grey -> RGB pallete
     let mut palette = [(0u8, 0u8, 0u8); 256];
@@ -148,7 +169,7 @@ fn main() {
     println!("image {}x{}", w, h);
 
     // make a synthetically rotated copy
-    let theta = std::f32::consts::PI / 30.0;
+    let theta = std::f32::consts::PI / 3.0;
     let im_r = geometric_transformations::rotate_about_center(&src_image,
                             theta,
                             geometric_transformations::Interpolation::Nearest,
@@ -159,7 +180,7 @@ fn main() {
 
     // find ORB corners in both and matches between the pair
     let mut config = Config::default();
-    config.lsh_k_l = (1, 1);
+    config.lsh_k_l = (0, 1);
     config.lsh_max_distance = 128;
     
     let corners = find_multiscale_features(&src_image, &config);
@@ -178,6 +199,9 @@ fn main() {
     let mut dst = src_image.expand_palette(&palette, None);
     draw_features(&mut dst, &corners);
     dst.save("features.png").expect("couldn't save");
+    
+    config.lsh_max_distance = 15;
+    let matches = find_matches(&corners, &corners_r, &config);
 
     let mut dst = im_r.expand_palette(&palette, None);
     draw_matches(&mut dst, &corners_r, &matches);
