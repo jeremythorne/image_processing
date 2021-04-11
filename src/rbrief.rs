@@ -296,7 +296,7 @@ impl Trainer {
     }
 
     pub fn make_test_set(&self) -> TestSet {
-        let mut threshold = 10.0;
+        let mut threshold = 0.4;
         let mut r:Vec<(PairPoint, &BitVec)>;
         let mut sorted = Vec::<(PairPoint, &BitVec)>::new();
         for (i, pair) in PairPoint::all_pairs().enumerate() {
@@ -305,14 +305,14 @@ impl Trainer {
         sorted.sort_by_key(|k| OrderedFloat((0.5 - k.1.mean()).abs()));
         //reverse list so we can "pop" off the end
         sorted.reverse();
-        
+       
         loop {
             let mut t = sorted.clone();
             r = Vec::<(PairPoint, &BitVec)>::new();
             r.push(t.pop().unwrap());
             while r.len() < 128 && t.len() > 0 {
                 let a = t.pop().unwrap();
-                let c = r.iter().fold(0.0, |s, b| s + b.1.correlation(a.1));
+                let c = r.iter().fold(0.0, |s, b| s + b.1.correlation(a.1)) / r.len() as f32;
                 if c < threshold {
                     r.push(a);
                 }
