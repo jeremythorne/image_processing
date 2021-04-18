@@ -4,8 +4,11 @@ use imageproc::{drawing, geometric_transformations};
 //use std::time::SystemTime;
 //use std::collections::HashMap;
 //use itertools::Itertools;
+use std::env;
 use std::ops::IndexMut;
 use std::fs;
+use std::io;
+use std::path::PathBuf;
 use image_processing::{Config, Corner, add_image_to_trainer, find_multiscale_features, find_matches};
 use image_processing::rbrief;
 
@@ -109,7 +112,16 @@ fn match_stats(corners:&Vec<Corner>, matches:&Vec<Option<&Corner>>,
     }
 }
 
-fn train_rbrief() {
+fn files(dir: &str) -> Result<Vec<PathBuf>, io::Error> {
+    Ok(fs::read_dir(dir)?
+        .into_iter()
+        .filter(|r| r.is_ok()) // Get rid of Err variants for Result<DirEntry>
+        .map(|r| r.unwrap().path()) // This is safe, since we only have the Ok variants
+        .filter(|r| r.is_file()) // Filter out non-files
+        .collect())
+}
+
+fn train_rbrief(dir_name:&str, count:usize) {
     // accumulate a bit array for every pair in 31x31 rect
     // for each image
     //   find features
@@ -126,33 +138,38 @@ fn train_rbrief() {
     let config = Config::default();
     let mut trainer = rbrief::Trainer::new();
 
-    let dir_name = "/home/pi/dev/VOCdevkit/VOC2006/PNGImages/";
-    let count = 10;
     println!("using {} images from {}", count, dir_name);
 
-    if let Ok(entries) = fs::read_dir(dir_name) {
-        for entry in entries.take(count) {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                println!("reading {:?}", path);
-                
-                // open the source image as greyscale
-                if let Ok(src_image) = image::open(path) {
-                    let src_image = src_image.into_luma8();
+    let mut num = 0;
+    if let Ok(entries) = files(dir_name) {
+        println!("{} files in folder", entries.len());
+        for path in entries.iter() {
+            println!("reading {:?}", path);
+            
+            // open the source image as greyscale
+            if let Ok(src_image) = image::open(path) {
+                let src_image = src_image.into_luma8();
 
-                    // resize to ~ 640x480
-                    let (mut w, mut h) = src_image.dimensions();
-                    h = h * 640 / w;
-                    w = 640;
-                    let image = imageops::resize(&src_image,
-                        w, h, imageops::FilterType::CatmullRom);
-                    println!("adding to trainer");
-                    add_image_to_trainer(&mut trainer, &image, &config);
+                // resize to ~ 640x480
+                let (mut w, mut h) = src_image.dimensions();
+                h = h * 640 / w;
+                w = 640;
+                let image = imageops::resize(&src_image,
+                    w, h, imageops::FilterType::CatmullRom);
+                println!("adding to trainer");
+                add_image_to_trainer(&mut trainer, &image, &config);
+                num += 1;
+                if num == count {
+                    break;
                 }
             }
         }
     } else {
         println!("couldn't read {}", dir_name);
+        return;
+    }
+    if num == 0 {
+        println!("didn't find any images");
         return;
     }
     trainer.make_test_set().save("trained_test_set.json").expect("failed to save trained set");
@@ -161,8 +178,10 @@ fn train_rbrief() {
 fn main() {
     println!("Hello, world!");
 
-    #[cfg(feature = "train")]
-    train_rbrief();
+    let args:Vec<String> = env::args().collect();
+    if args.len() == 4 && args[1] == "train" {
+        train_rbrief(&args[2], args[3].parse().unwrap_or(1));
+    }
 
     // make a grey -> RGB pallete
     let mut palette = [(0u8, 0u8, 0u8); 256];
