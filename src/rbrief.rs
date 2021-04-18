@@ -297,7 +297,7 @@ impl Trainer {
 
     pub fn make_test_set(&self) -> TestSet {
         let mut threshold = 0.4;
-        let mut r:Vec<(PairPoint, &BitVec)>;
+        let mut r = Vec::<(PairPoint, &BitVec)>::new();
         let mut sorted = Vec::<(PairPoint, &BitVec)>::new();
         for (i, pair) in PairPoint::all_pairs().enumerate() {
             sorted.push((pair, &self.scores[i]));
@@ -305,23 +305,30 @@ impl Trainer {
         sorted.sort_by_key(|k| OrderedFloat((0.5 - k.1.mean()).abs()));
         //reverse list so we can "pop" off the end
         sorted.reverse();
-       
-        loop {
-            let mut t = sorted.clone();
-            r = Vec::<(PairPoint, &BitVec)>::new();
-            r.push(t.pop().unwrap());
-            while r.len() < 128 && t.len() > 0 {
-                let a = t.pop().unwrap();
-                let c = r.iter().fold(0.0, |s, b| s + b.1.correlation(a.1)) / r.len() as f32;
-                if c < threshold {
-                    r.push(a);
+      
+        let mut delta = 0.01;
+        let mut up = true;
+        for _i in 0..5 {
+            threshold += delta;
+            loop {
+                let mut t = sorted.clone();
+                r = Vec::<(PairPoint, &BitVec)>::new();
+                r.push(t.pop().unwrap());
+                while r.len() < 128 && t.len() > 0 {
+                    let a = t.pop().unwrap();
+                    let c = r.iter().fold(0.0, |s, b| s + b.1.correlation(a.1)) / r.len() as f32;
+                    if c < threshold {
+                        r.push(a);
+                    }
                 }
+                println!("threshold {} collected {} tests", threshold, r.len());
+                if (up && r.len() == 128) || (!up && r.len() < 128) {
+                    break;
+                }
+                threshold += delta;
             }
-            println!("threshold {} collected {} tests", threshold, r.len());
-            if r.len() == 128 {
-                break;
-            }
-            threshold += 0.01;
+            delta = -delta / 2.0;
+            up = !up;
         }
 
         fn stat(v:&Vec<(PairPoint, &BitVec)>) {
