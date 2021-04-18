@@ -5,6 +5,7 @@ use imageproc::{drawing, geometric_transformations};
 //use std::collections::HashMap;
 //use itertools::Itertools;
 use std::ops::IndexMut;
+use std::fs;
 use image_processing::{Config, Corner, add_image_to_trainer, find_multiscale_features, find_matches};
 use image_processing::rbrief;
 
@@ -122,23 +123,38 @@ fn train_rbrief() {
     // correlation = sum_over_R(hamming::distance(Ri, t))
 
     println!("training rBrief descriptor test set");
-    // open the source image as greyscale
-    let src_image =
-        image::open("res/im0.png").expect("failed to open image")
-            .into_luma8();
-
-    // resize to ~ 640x480
-    let (mut w, mut h) = src_image.dimensions();
-    h = h * 640 / w;
-    w = 640;
-    let image = imageops::resize(&src_image,
-        w, h, imageops::FilterType::CatmullRom);
-    
     let config = Config::default();
     let mut trainer = rbrief::Trainer::new();
 
-    add_image_to_trainer(&mut trainer, &image, &config);
+    let dir_name = "/home/pi/dev/VOCdevkit/VOC2006/PNGImages/";
+    let count = 10;
+    println!("using {} images from {}", count, dir_name);
 
+    if let Ok(entries) = fs::read_dir(dir_name) {
+        for entry in entries.take(count) {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                println!("reading {:?}", path);
+                
+                // open the source image as greyscale
+                if let Ok(src_image) = image::open(path) {
+                    let src_image = src_image.into_luma8();
+
+                    // resize to ~ 640x480
+                    let (mut w, mut h) = src_image.dimensions();
+                    h = h * 640 / w;
+                    w = 640;
+                    let image = imageops::resize(&src_image,
+                        w, h, imageops::FilterType::CatmullRom);
+                    println!("adding to trainer");
+                    add_image_to_trainer(&mut trainer, &image, &config);
+                }
+            }
+        }
+    } else {
+        println!("couldn't read {}", dir_name);
+        return;
+    }
     trainer.make_test_set().save("trained_test_set.json").expect("failed to save trained set");
 }
 
